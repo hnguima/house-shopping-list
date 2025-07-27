@@ -1,0 +1,17 @@
+:root {
+  /* Light theme */
+  --color-primary-light: #2e7d32;
+  --color-secondary-light: #ff6f00;
+  --color-bg-light: #f5f5f5;
+  --color-bg-light-paper: #fff;
+  --color-header-bg-light: #2e7d32;
+  --color-text-light: #222;
+
+  /* Dark theme */
+  --color-primary-dark: #4caf50;
+  --color-secondary-dark: #ffa726;
+  --color-bg-dark: #18111e;
+  --color-bg-dark-paper: #262231;
+  --color-header-bg-dark: #4caf50;
+  --color-text-dark: #fff;
+}
