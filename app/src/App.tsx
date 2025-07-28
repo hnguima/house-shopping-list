@@ -7,29 +7,14 @@ import { useChangeLanguage } from "./hooks/useChangeLanguage";
 import "./i18n";
 import i18n from "i18next";
 import Container from "@mui/material/Container";
-import DashboardScreen from "./screens/DashboardScreen";
+import ShoppingListScreen from "./screens/ShoppingListScreen";
 import Header from "./components/Header";
-import { StatusBar } from "@capacitor/status-bar";
-import { Capacitor } from "@capacitor/core";
 
 import { useTranslation } from "react-i18next";
 import UserProfileScreen from "./screens/UserProfileScreen";
 import LoginScreen from "./screens/LoginScreen";
 import apiClient from "./utils/apiClient";
 import { SyncManager } from "./utils/syncManager";
-
-// Console patching temporarily disabled to reduce log noise
-// (function patchConsoleMethods() {
-//   const patch = (method: "log" | "error" | "warn") => {
-//     const original = console[method];
-//     console[method] = function (...args: any[]) {
-//       original.apply(console, ["[ShoppingList]", ...args]);
-//     };
-//   };
-//   patch("log");
-//   patch("error");
-//   patch("warn");
-// })();
 
 function App() {
   const { t } = useTranslation();
@@ -47,7 +32,6 @@ function App() {
     clearUser,
   } = usePersistentConfig();
   const changeLanguage = useChangeLanguage(setLanguage);
-  const [safeAreaTop, setSafeAreaTop] = useState<number>(0);
 
   const handleUserUpdate = async (updatedUser: any) => {
     try {
@@ -125,29 +109,6 @@ function App() {
     console.log("[App] Sync manager initialized");
   }, []); // Remove refreshUser dependency
 
-  // Get safe area information on mobile platforms
-  useEffect(() => {
-    const getSafeAreaInfo = async () => {
-      if (Capacitor.isNativePlatform()) {
-        try {
-          await StatusBar.getInfo();
-          // On mobile, we need to account for status bar + typical header height
-          // Status bar is typically 24-44px, app bar is typically 56-64px
-          setSafeAreaTop(56 + 24); // App bar height + typical status bar
-        } catch (error) {
-          console.log("Could not get status bar info:", error);
-          // Fallback to typical mobile header heights
-          setSafeAreaTop(80); // App bar + status bar fallback
-        }
-      } else {
-        // Web platform - only account for app bar
-        setSafeAreaTop(64);
-      }
-    };
-
-    getSafeAreaInfo();
-  }, []);
-
   if (!themeMode || !language) return null; // or a loading spinner
 
   // If not logged in, show login screen
@@ -166,7 +127,7 @@ function App() {
   };
 
   const renderScreen = () => {
-    if (screen === "dashboard") return <DashboardScreen />;
+    if (screen === "dashboard") return <ShoppingListScreen />;
     return (
       <UserProfileScreen
         themeMode={themeMode}
@@ -190,9 +151,12 @@ function App() {
       />
       <Container
         className="App"
+        maxWidth="md"
         sx={{
-          paddingTop: `${safeAreaTop}px`, // Use padding instead of margin for proper header spacing
-          paddingBottom: "calc(20px + env(safe-area-inset-bottom, 0px))", // Bottom padding + safe area
+          paddingTop: `calc(64px + env(safe-area-inset-top, 0px))`, // Header height + safe area
+          paddingLeft: 1,
+          paddingRight: 1,
+          paddingBottom: 1,
           minHeight:
             "calc(100vh - env(safe-area-inset-bottom, 0px) - 64px - env(safe-area-inset-top, 0px))", // Full height
           boxSizing: "border-box", // Include padding in height calculation
