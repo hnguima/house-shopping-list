@@ -13,8 +13,8 @@ export interface User {
   photo?: string; // Base64 data URL or blob URL
   provider?: string;
   preferences: UserPreferences;
-  createdAt?: number; // Unix timestamp
-  updatedAt?: number; // Unix timestamp
+  createdAt?: number; // Unix timestamp in milliseconds
+  updatedAt?: number; // Unix timestamp in milliseconds
 }
 
 export interface AppState {
@@ -35,6 +35,6 @@ export const createDefaultUser = (): User => ({
   email: "",
   name: "",
   preferences: { ...DEFAULT_PREFERENCES },
-  createdAt: Math.floor(Date.now() / 1000), // Unix timestamp
-  updatedAt: Math.floor(Date.now() / 1000), // Unix timestamp
+  createdAt: Date.now(), // Unix timestamp in milliseconds
+  updatedAt: Date.now(), // Unix timestamp in milliseconds
 });

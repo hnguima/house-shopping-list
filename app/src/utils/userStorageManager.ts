@@ -82,7 +82,7 @@ export class UserStorageManager {
 
     const updatedUser = {
       ...user,
-      updatedAt: Math.floor(Date.now() / 1000), // Unix timestamp
+      updatedAt: Date.now(), // Unix timestamp in milliseconds
     };
 
     const newState: AppState = {
@@ -145,7 +145,7 @@ export class UserStorageManager {
         ...user.preferences,
         ...preferences,
       },
-      updatedAt: Math.floor(Date.now() / 1000), // Unix timestamp
+      updatedAt: Date.now(), // Unix timestamp in milliseconds
     };
 
     await this.saveUser(updatedUser);
@@ -186,7 +186,7 @@ export class UserStorageManager {
       const updatedUser: User = {
         ...user,
         photo: base64Data,
-        updatedAt: Math.floor(Date.now() / 1000), // Unix timestamp
+        updatedAt: Date.now(), // Unix timestamp in milliseconds
       };
 
       await this.saveUser(updatedUser);
@@ -244,10 +244,10 @@ export class UserStorageManager {
     if (state.user) {
       // Ensure required fields exist
       if (!state.user.createdAt) {
-        state.user.createdAt = Math.floor(Date.now() / 1000); // Unix timestamp
+        state.user.createdAt = Date.now(); // Unix timestamp in milliseconds
       }
       if (!state.user.updatedAt) {
-        state.user.updatedAt = Math.floor(Date.now() / 1000); // Unix timestamp
+        state.user.updatedAt = Date.now(); // Unix timestamp in milliseconds
       }
     }
 
@@ -291,8 +291,8 @@ export const migrateLegacyUserData = async (): Promise<boolean> => {
           primaryColor: DEFAULT_PREFERENCES.primaryColor,
           fontSize: DEFAULT_PREFERENCES.fontSize,
         },
-        createdAt: Math.floor(Date.now() / 1000), // Unix timestamp
-        updatedAt: Math.floor(Date.now() / 1000), // Unix timestamp
+        createdAt: Date.now(), // Unix timestamp in milliseconds
+        updatedAt: Date.now(), // Unix timestamp in milliseconds
       };
 
       await UserStorageManager.saveUser(migratedUser);

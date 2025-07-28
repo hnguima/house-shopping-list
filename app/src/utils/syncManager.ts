@@ -1,12 +1,13 @@
 import apiClient from "./apiClient";
 import { UserStorageManager } from "./userStorageManager";
+import { ShoppingSyncManager } from "./shoppingSyncManager";
 import type { User } from "../types/user";
 
 interface SyncStatus {
   needsSync: boolean;
   direction: "push" | "pull" | "none";
-  localUpdatedAt?: number; // Unix timestamp
-  remoteUpdatedAt?: number; // Unix timestamp
+  localUpdatedAt?: number; // Unix timestamp in milliseconds
+  remoteUpdatedAt?: number; // Unix timestamp in milliseconds
 }
 
 export class SyncManager {
@@ -318,7 +319,7 @@ export class SyncManager {
     try {
       const user = await UserStorageManager.getUser();
       if (user) {
-        user.updatedAt = Math.floor(Date.now() / 1000); // Unix timestamp
+        user.updatedAt = Date.now(); // Unix timestamp in milliseconds
         await UserStorageManager.saveUser(user);
         console.log("[SyncManager] Local update timestamp set");
       }
@@ -341,5 +342,8 @@ export class SyncManager {
     this.syncCheckInProgress = false;
     this.lastSyncCheckTime = 0;
     this.initialized = true;
+
+    // Initialize shopping sync manager
+    ShoppingSyncManager.initialize();
   }
 }
