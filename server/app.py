@@ -8,6 +8,7 @@ from config import config
 from database import db
 from auth_routes import auth_bp
 from user_routes import user_bp
+from shopping_routes import shopping_bp
 
 # Load environment variables
 load_dotenv()
@@ -84,6 +85,7 @@ def register_blueprints(app):
     """Register application blueprints"""
     app.register_blueprint(auth_bp)
     app.register_blueprint(user_bp)
+    app.register_blueprint(shopping_bp)
     
     # Health check endpoint
     @app.route('/health')
