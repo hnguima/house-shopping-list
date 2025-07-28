@@ -14,7 +14,7 @@ import {
   InputLabel,
   FormControlLabel,
 } from "@mui/material";
-import { styled } from "@mui/material/styles";
+import { styled } from "@mui/material";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
 import ProfilePhoto from "../components/ProfilePhoto";
@@ -117,7 +117,15 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
       });
 
       if (image.dataUrl) {
-        const updatedUser = { ...user, photo: image.dataUrl };
+        const updatedUser = {
+          ...user,
+          photo: image.dataUrl,
+          preferences: {
+            ...user.preferences,
+            theme: themeMode, // Use current theme from props
+            language: language, // Use current language from props
+          },
+        };
         onUserUpdate(updatedUser);
 
         setSnackbar({
@@ -149,7 +157,15 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
       });
 
       if (image.dataUrl) {
-        const updatedUser = { ...user, photo: image.dataUrl };
+        const updatedUser = {
+          ...user,
+          photo: image.dataUrl,
+          preferences: {
+            ...user.preferences,
+            theme: themeMode, // Use current theme from props
+            language: language, // Use current language from props
+          },
+        };
         onUserUpdate(updatedUser);
 
         setSnackbar({
@@ -175,7 +191,17 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
       old: user.name,
       new: editName,
     });
-    const updatedUser = { ...user, name: editName };
+
+    // Create updated user with current name AND current preferences from props
+    const updatedUser = {
+      ...user,
+      name: editName,
+      preferences: {
+        ...user.preferences,
+        theme: themeMode, // Use current theme from props
+        language: language, // Use current language from props
+      },
+    };
 
     // Update the UI state and save to storage (this automatically updates timestamp)
     onUserUpdate(updatedUser);
@@ -188,7 +214,7 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
   };
 
   return (
-    <Box sx={{ p: 2 }}>
+    <Box sx={{ py: 0, px: 2 }}>
       {/* Profile Photo Section */}
       <Pane>
         <Typography variant="h6" gutterBottom>
