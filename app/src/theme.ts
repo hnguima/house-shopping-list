@@ -1,5 +1,5 @@
-import { createTheme } from "@mui/material/styles";
-import type { Theme } from "@mui/material/styles";
+import { createTheme } from "@mui/material";
+import type { Theme } from "@mui/material";
 
 function getCssVar(name: string): string {
   if (typeof window === "undefined") return "";

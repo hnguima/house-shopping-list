@@ -10,8 +10,8 @@ import {
   Alert,
   CircularProgress,
   Link,
+  styled
 } from "@mui/material";
-import { styled } from "@mui/material/styles";
 import GoogleIcon from "@mui/icons-material/Google";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import LoginIcon from "@mui/icons-material/Login";
