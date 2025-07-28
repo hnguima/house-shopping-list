@@ -3,6 +3,11 @@ from datetime import datetime, timezone
 from bson import ObjectId
 import bcrypt
 from typing import Optional, Dict, Any
+import time
+
+def get_unix_timestamp() -> int:
+    """Get current Unix timestamp in milliseconds"""
+    return int(time.time() * 1000)
 
 class User:
     def __init__(self, data: Dict[str, Any]):
@@ -25,8 +30,8 @@ class User:
                 'theme': 'light',
                 'language': 'en'
             },
-            'createdAt': datetime.now(timezone.utc),
-            'updatedAt': datetime.now(timezone.utc)
+            'createdAt': get_unix_timestamp(),
+            'updatedAt': get_unix_timestamp()
         }
         
         users_collection = db.get_collection('users')
@@ -61,8 +66,8 @@ class User:
                 'theme': 'light',
                 'language': 'en'
             },
-            'createdAt': datetime.now(timezone.utc),
-            'updatedAt': datetime.now(timezone.utc)
+            'createdAt': get_unix_timestamp(),
+            'updatedAt': get_unix_timestamp()
         }
         
         result = users_collection.insert_one(user_data)
@@ -99,7 +104,7 @@ class User:
     
     def update(self, update_data: Dict[str, Any]) -> None:
         """Update user data"""
-        update_data['updatedAt'] = datetime.now(timezone.utc)
+        update_data['updatedAt'] = get_unix_timestamp()
         
         users_collection = db.get_collection('users')
         users_collection.update_one(
@@ -120,8 +125,8 @@ class User:
             'provider': self.data['provider'],
             'photo': self.data.get('photo'),
             'preferences': self.data.get('preferences', {}),
-            'createdAt': int(self.data['createdAt'].timestamp()),
-            'updatedAt': int(self.data['updatedAt'].timestamp())
+            'createdAt': self.data['createdAt'],
+            'updatedAt': self.data['updatedAt']
         }
         
         if include_sensitive:

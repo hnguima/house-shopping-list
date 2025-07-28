@@ -27,7 +27,7 @@ def check_sync_status():
             updated_at = user.data['updatedAt']
         
         response_data = {
-            'updatedAt': int(updated_at.timestamp()),
+            'updatedAt': updated_at,  # updated_at is already a Unix timestamp (int)
             'userId': str(user.id)
         }
         
