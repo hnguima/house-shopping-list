@@ -403,6 +403,70 @@ class ApiClient {
     return this.uploadBase64Image("/api/user/upload-photo", base64Data);
   }
 
+  // Shopping Lists API
+  async getShoppingLists(includeArchived = false) {
+    const params = includeArchived ? "?include_archived=true" : "";
+    return this.get(`/api/shopping/lists${params}`);
+  }
+
+  async createShoppingList(data: { name: string; description?: string }) {
+    return this.post("/api/shopping/lists", data);
+  }
+
+  async getShoppingList(listId: string) {
+    return this.get(`/api/shopping/lists/${listId}`);
+  }
+
+  async updateShoppingList(
+    listId: string,
+    data: { name?: string; description?: string; archived?: boolean }
+  ) {
+    return this.put(`/api/shopping/lists/${listId}`, data);
+  }
+
+  async deleteShoppingList(listId: string) {
+    return this.delete(`/api/shopping/lists/${listId}`);
+  }
+
+  async archiveShoppingList(listId: string) {
+    return this.post(`/api/shopping/lists/${listId}/archive`);
+  }
+
+  async unarchiveShoppingList(listId: string) {
+    return this.post(`/api/shopping/lists/${listId}/unarchive`);
+  }
+
+  // Shopping Items API
+  async addItemToList(
+    listId: string,
+    data: { name: string; quantity?: number; category?: string; notes?: string }
+  ) {
+    return this.post(`/api/shopping/lists/${listId}/items`, data);
+  }
+
+  async updateItemInList(
+    listId: string,
+    itemId: string,
+    data: {
+      name?: string;
+      quantity?: number;
+      category?: string;
+      notes?: string;
+      completed?: boolean;
+    }
+  ) {
+    return this.put(`/api/shopping/lists/${listId}/items/${itemId}`, data);
+  }
+
+  async removeItemFromList(listId: string, itemId: string) {
+    return this.delete(`/api/shopping/lists/${listId}/items/${itemId}`);
+  }
+
+  // Statistics API
+  async getShoppingStats() {
+    return this.get("/api/shopping/stats");
+  }
+
   // Health check
   async healthCheck() {
     return this.get("/health");

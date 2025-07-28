@@ -33,7 +33,7 @@ export class SessionManager {
    */
   static handleLoginResponse(response: any): boolean {
     try {
-      const { access_token, refresh_token, session_id } = response;
+      const { access_token, refresh_token } = response;
 
       if (!access_token || !refresh_token) {
         console.error(
@@ -43,7 +43,7 @@ export class SessionManager {
       }
 
       // Store tokens
-      apiClient.setTokens(access_token, refresh_token, session_id);
+      apiClient.setTokens(access_token, refresh_token);
 
       console.log("[SessionManager] Login tokens stored successfully");
       return true;
@@ -215,11 +215,9 @@ export class SessionManager {
    */
   static getSessionInfo(): {
     hasSession: boolean;
-    sessionId: string | null;
   } {
     return {
       hasSession: this.hasValidSession(),
-      sessionId: apiClient.getSessionId(),
     };
   }
 }
