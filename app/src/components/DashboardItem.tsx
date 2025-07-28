@@ -1,7 +1,7 @@
 import React from "react";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
-import { styled } from "@mui/material/styles";
+import { styled } from "@mui/material";
 
 interface DashboardItemProps {
   title?: string;
