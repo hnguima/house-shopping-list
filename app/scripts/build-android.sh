@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
-npm run build
+# Build without test files
+# NODE_ENV=production 
+tsc -b && vite build --mode development
 npx cap sync android
 cd android
 ./gradlew assembleDebug
