@@ -31,7 +31,7 @@ export class SessionManager {
   /**
    * Handle login response and store tokens
    */
-  static handleLoginResponse(response: any): boolean {
+  static async handleLoginResponse(response: any): Promise<boolean> {
     try {
       const { access_token, refresh_token } = response;
 
@@ -43,7 +43,7 @@ export class SessionManager {
       }
 
       // Store tokens
-      apiClient.setTokens(access_token, refresh_token);
+      await apiClient.setTokens(access_token, refresh_token);
 
       console.log("[SessionManager] Login tokens stored successfully");
       return true;
@@ -56,8 +56,8 @@ export class SessionManager {
   /**
    * Check if user has valid session
    */
-  static hasValidSession(): boolean {
-    return apiClient.hasValidSession();
+  static async hasValidSession(): Promise<boolean> {
+    return await apiClient.hasValidSession();
   }
 
   /**
@@ -122,7 +122,9 @@ export class SessionManager {
    */
   static handleExpiredSession(): void {
     console.log("[SessionManager] Session expired, cleaning up");
-    apiClient.clearTokens();
+    apiClient.clearTokens().catch(error => {
+      console.error("[SessionManager] Error clearing tokens on session expiry:", error);
+    });
 
     // Notify app about session expiration
     window.dispatchEvent(new CustomEvent("sessionExpired"));
@@ -198,7 +200,7 @@ export class SessionManager {
   private static startSessionValidation(): void {
     // Check session validity every 5 minutes
     setInterval(async () => {
-      if (this.hasValidSession()) {
+      if (await this.hasValidSession()) {
         try {
           // Make a light API call to verify session is still valid
           await apiClient.getCurrentUser();
@@ -213,11 +215,11 @@ export class SessionManager {
   /**
    * Get current session info
    */
-  static getSessionInfo(): {
+  static async getSessionInfo(): Promise<{
     hasSession: boolean;
-  } {
+  }> {
     return {
-      hasSession: this.hasValidSession(),
+      hasSession: await this.hasValidSession(),
     };
   }
 }

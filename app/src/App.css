@@ -3,4 +3,9 @@
   margin: 0 auto;
   padding: 0;
   text-align: left;
+  overflow-x: hidden; /* Prevent horizontal scroll */
+}
+
+body {
+  overflow-x: hidden; /* Prevent horizontal scroll on body */
 }
