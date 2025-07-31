@@ -1,0 +1,9 @@
+tunnel: ${TUNNEL_TOKEN}
+credentials-file: /etc/cloudflared/cert.pem
+
+ingress:
+  - hostname: shop-list-api.the-cube-lab.com
+    service: https://api:5000
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404

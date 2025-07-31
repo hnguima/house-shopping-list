@@ -3,8 +3,36 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from shopping_models import ShoppingList, ShoppingListStats
 from middleware import validate_json, auth_required
 from bson import ObjectId
+from datetime import datetime
 
 shopping_bp = Blueprint('shopping', __name__, url_prefix='/api/shopping')
+
+@shopping_bp.route('/sync-check', methods=['GET'])
+@auth_required
+def check_shopping_sync_status():
+    """Get timestamp information for all user's shopping lists for sync purposes"""
+    try:
+        user_id = get_jwt_identity()
+        include_archived = request.args.get('include_archived', 'false').lower() == 'true'
+        
+        # Get only the timestamps, not full data
+        shopping_lists = ShoppingList.find_by_user_id(user_id, include_archived)
+        
+        # Return only list IDs and timestamps
+        timestamps = []
+        for sl in shopping_lists:
+            timestamps.append({
+                '_id': str(sl.id),
+                'updatedAt': sl.data.get('updatedAt', 0)
+            })
+        
+        return jsonify({
+            'lists': timestamps
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Shopping sync check error: {e}")
+        return jsonify({'message': 'Failed to check shopping sync status'}), 500
 
 @shopping_bp.route('/lists', methods=['GET'])
 @auth_required
@@ -33,19 +61,28 @@ def create_shopping_list():
         user_id = get_jwt_identity()
         data = request.get_json()
         
+        current_app.logger.info(f"Creating shopping list for user {user_id}: {data}")
+        
         name = data['name'].strip()
         description = data.get('description', '').strip()
         color = data.get('color', '#1976d2')  # Default to Material-UI primary blue
+        list_id = data.get('_id')  # Accept custom ID from frontend
+        items = data.get('items', [])  # Accept items array from frontend
         
         if not name:
             return jsonify({'message': 'Shopping list name is required'}), 400
         
-        shopping_list = ShoppingList.create(user_id, name, description, color)
+        current_app.logger.info(f"About to create shopping list: name={name}, desc={description}, color={color}, id={list_id}, items_count={len(items)}")
+        shopping_list = ShoppingList.create(user_id, name, description, color, list_id, items)
+        current_app.logger.info(f"Shopping list created with ID: {shopping_list.id}")
         
-        return jsonify({
+        result = jsonify({
             'message': 'Shopping list created successfully',
             'shopping_list': shopping_list.to_dict()
-        }), 201
+        })
+        
+        current_app.logger.info(f"Returning shopping list data: {shopping_list.to_dict()}")
+        return result, 201
         
     except Exception as e:
         current_app.logger.error(f"Create shopping list error: {e}")
@@ -58,7 +95,8 @@ def get_shopping_list(list_id):
     try:
         user_id = get_jwt_identity()
         
-        if not ObjectId.is_valid(list_id):
+        # Accept both MongoDB ObjectIds and custom frontend-generated IDs
+        if not (ObjectId.is_valid(list_id) or '_' in list_id):
             return jsonify({'message': 'Invalid list ID'}), 400
         
         shopping_list = ShoppingList.find_by_id(list_id, user_id)
@@ -82,7 +120,8 @@ def update_shopping_list(list_id):
         user_id = get_jwt_identity()
         data = request.get_json()
         
-        if not ObjectId.is_valid(list_id):
+        # Accept both MongoDB ObjectIds and custom frontend-generated IDs
+        if not (ObjectId.is_valid(list_id) or '_' in list_id):
             return jsonify({'message': 'Invalid list ID'}), 400
         
         shopping_list = ShoppingList.find_by_id(list_id, user_id)
@@ -107,6 +146,9 @@ def update_shopping_list(list_id):
         if 'archived' in data:
             update_data['archived'] = bool(data['archived'])
         
+        if 'items' in data:
+            update_data['items'] = data['items']  # Accept entire items array
+        
         shopping_list.update(update_data)
         
         return jsonify({
@@ -125,7 +167,8 @@ def delete_shopping_list(list_id):
     try:
         user_id = get_jwt_identity()
         
-        if not ObjectId.is_valid(list_id):
+        # Accept both MongoDB ObjectIds and custom frontend-generated IDs
+        if not (ObjectId.is_valid(list_id) or '_' in list_id):
             return jsonify({'message': 'Invalid list ID'}), 400
         
         shopping_list = ShoppingList.find_by_id(list_id, user_id)
@@ -150,7 +193,8 @@ def archive_shopping_list(list_id):
     try:
         user_id = get_jwt_identity()
         
-        if not ObjectId.is_valid(list_id):
+        # Accept both MongoDB ObjectIds and custom frontend-generated IDs
+        if not (ObjectId.is_valid(list_id) or '_' in list_id):
             return jsonify({'message': 'Invalid list ID'}), 400
         
         shopping_list = ShoppingList.find_by_id(list_id, user_id)
@@ -176,7 +220,8 @@ def unarchive_shopping_list(list_id):
     try:
         user_id = get_jwt_identity()
         
-        if not ObjectId.is_valid(list_id):
+        # Accept both MongoDB ObjectIds and custom frontend-generated IDs
+        if not (ObjectId.is_valid(list_id) or '_' in list_id):
             return jsonify({'message': 'Invalid list ID'}), 400
         
         shopping_list = ShoppingList.find_by_id(list_id, user_id)
@@ -195,129 +240,27 @@ def unarchive_shopping_list(list_id):
         current_app.logger.error(f"Unarchive shopping list error: {e}")
         return jsonify({'message': 'Failed to unarchive shopping list'}), 500
 
-# Shopping List Items Routes
+# REMOVED: Individual item routes - using simple items array sync instead
+# Items are now synced as a complete array in the shopping list update endpoint
 
-@shopping_bp.route('/lists/<list_id>/items', methods=['POST'])
-@auth_required
-@validate_json('name')
-def add_item_to_list(list_id):
-    """Add an item to a shopping list"""
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        
-        if not ObjectId.is_valid(list_id):
-            return jsonify({'message': 'Invalid list ID'}), 400
-        
-        shopping_list = ShoppingList.find_by_id(list_id, user_id)
-        
-        if not shopping_list:
-            return jsonify({'message': 'Shopping list not found'}), 404
-        
-        name = data['name'].strip()
-        if not name:
-            return jsonify({'message': 'Item name is required'}), 400
-        
-        quantity = max(1, int(data.get('quantity', 1)))
-        category = data.get('category', '').strip()
-        notes = data.get('notes', '').strip()
-        
-        item = shopping_list.add_item(name, quantity, category, notes)
-        
-        return jsonify({
-            'message': 'Item added successfully',
-            'item': item,
-            'shopping_list': shopping_list.to_dict()
-        }), 201
-        
-    except ValueError:
-        return jsonify({'message': 'Invalid quantity value'}), 400
-    except Exception as e:
-        current_app.logger.error(f"Add item error: {e}")
-        return jsonify({'message': 'Failed to add item'}), 500
+# @shopping_bp.route('/lists/<list_id>/items', methods=['POST'])
+# @auth_required
+# @validate_json('name')
+# def add_item_to_list(list_id):
+#     """Add an item to a shopping list"""
+#     [Individual item management routes removed - items synced as array]
 
-@shopping_bp.route('/lists/<list_id>/items/<item_id>', methods=['PUT'])
-@auth_required
-def update_item_in_list(list_id, item_id):
-    """Update an item in a shopping list"""
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        
-        if not ObjectId.is_valid(list_id):
-            return jsonify({'message': 'Invalid list ID'}), 400
-        
-        shopping_list = ShoppingList.find_by_id(list_id, user_id)
-        
-        if not shopping_list:
-            return jsonify({'message': 'Shopping list not found'}), 404
-        
-        # Validate update data
-        update_data = {}
-        
-        if 'name' in data:
-            name = data['name'].strip()
-            if not name:
-                return jsonify({'message': 'Item name cannot be empty'}), 400
-            update_data['name'] = name
-        
-        if 'quantity' in data:
-            try:
-                update_data['quantity'] = max(1, int(data['quantity']))
-            except ValueError:
-                return jsonify({'message': 'Invalid quantity value'}), 400
-        
-        if 'category' in data:
-            update_data['category'] = data['category'].strip()
-        
-        if 'notes' in data:
-            update_data['notes'] = data['notes'].strip()
-        
-        if 'completed' in data:
-            update_data['completed'] = bool(data['completed'])
-        
-        success = shopping_list.update_item(item_id, update_data)
-        
-        if not success:
-            return jsonify({'message': 'Item not found'}), 404
-        
-        return jsonify({
-            'message': 'Item updated successfully',
-            'shopping_list': shopping_list.to_dict()
-        }), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Update item error: {e}")
-        return jsonify({'message': 'Failed to update item'}), 500
+# @shopping_bp.route('/lists/<list_id>/items/<item_id>', methods=['PUT'])
+# @auth_required  
+# def update_item_in_list(list_id, item_id):
+#     """Update an item in a shopping list"""
+#     [Individual item management routes removed - items synced as array]
 
-@shopping_bp.route('/lists/<list_id>/items/<item_id>', methods=['DELETE'])
-@auth_required
-def remove_item_from_list(list_id, item_id):
-    """Remove an item from a shopping list"""
-    try:
-        user_id = get_jwt_identity()
-        
-        if not ObjectId.is_valid(list_id):
-            return jsonify({'message': 'Invalid list ID'}), 400
-        
-        shopping_list = ShoppingList.find_by_id(list_id, user_id)
-        
-        if not shopping_list:
-            return jsonify({'message': 'Shopping list not found'}), 404
-        
-        success = shopping_list.remove_item(item_id)
-        
-        if not success:
-            return jsonify({'message': 'Item not found'}), 404
-        
-        return jsonify({
-            'message': 'Item removed successfully',
-            'shopping_list': shopping_list.to_dict()
-        }), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Remove item error: {e}")
-        return jsonify({'message': 'Failed to remove item'}), 500
+# @shopping_bp.route('/lists/<list_id>/items/<item_id>', methods=['DELETE'])
+# @auth_required
+# def remove_item_from_list(list_id, item_id):
+#     """Remove an item from a shopping list"""
+#     [Individual item management routes removed - items synced as array]
 
 # Statistics Routes
 

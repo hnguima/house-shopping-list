@@ -28,7 +28,7 @@ EXPOSE 5000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5000/health || exit 1
+    CMD curl -f -k https://localhost:5000/health || exit 1
 
-# Run the application with development auto-reload support
-CMD ["python", "-c", "import os; from app import create_app; app = create_app(); app.run(host='0.0.0.0', port=5000, debug=True if os.environ.get('FLASK_DEBUG', '').lower() == 'true' else False)"]
+# Run the application with SSL support
+CMD ["python", "app.py"]

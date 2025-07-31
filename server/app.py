@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from dotenv import load_dotenv
@@ -37,11 +37,70 @@ def create_app(config_name=None):
 
 def setup_extensions(app):
     """Initialize Flask extensions"""
-    # CORS - More permissive for development
+    # CORS - Allow both HTTP and HTTPS for development flexibility
+    # Server enforces HTTPS but allows HTTP frontends for local development
     if app.config['DEBUG']:
-        CORS(app, origins=['http://localhost:5173', 'http://localhost:3000'], supports_credentials=True)
+        CORS(app, 
+             origins=[
+                 'http://localhost:5173', 
+                 'https://localhost:5173',
+                 'http://localhost:3000',
+                 'https://localhost:3000',
+                 'https://shop-list-api.the-cube-lab.com',
+                 'https://the-cube-lab.com',
+                 'https://*.the-cube-lab.com',
+                 'capacitor://localhost',  # Capacitor Android
+                 'ionic://localhost',      # Ionic Android
+                 'http://localhost',
+                 'https://localhost',
+                 'http://localhost:*',
+                 'https://localhost:*',
+                 'http://127.0.0.1:3000', 
+                 'https://127.0.0.1:3000',
+                 'http://localhost:8100',
+                 'https://localhost:8100',
+                 'http://127.0.0.1:8100',
+                 'https://127.0.0.1:8100',
+                 'http://127.0.0.1:5173',
+                 'https://127.0.0.1:5173',
+                 'http://10.0.2.2:3001'   # Android emulator
+             ], 
+             supports_credentials=True,
+             allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+             methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
     else:
-        CORS(app, origins=[app.config['FRONTEND_URL']], supports_credentials=True)
+        # In production, allow configured frontend URL and all cube lab domains
+        # Also allow HTTP localhost for development access to production API
+        allowed_origins = [app.config['FRONTEND_URL']]
+        allowed_origins.extend([
+            'http://localhost:5173',  # Allow HTTP frontend in development
+            'https://localhost:5173',
+            'http://localhost:3000',
+            'https://localhost:3000',
+            'https://shop-list-api.the-cube-lab.com',
+            'https://the-cube-lab.com',
+            'https://*.the-cube-lab.com',
+            'capacitor://localhost',
+            'ionic://localhost',
+            'http://localhost',
+            'https://localhost',
+            'http://localhost:*',
+            'https://localhost:*',
+            'http://127.0.0.1:3000',
+            'https://127.0.0.1:3000',
+            'http://localhost:8100',
+            'https://localhost:8100',
+            'http://127.0.0.1:8100',
+            'https://127.0.0.1:8100',
+            'http://127.0.0.1:5173',
+            'https://127.0.0.1:5173',
+            'http://10.0.2.2:3001'
+        ])
+        CORS(app, 
+             origins=allowed_origins, 
+             supports_credentials=True,
+             allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+             methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
     
     # JWT
     jwt = JWTManager(app)
@@ -87,6 +146,18 @@ def register_blueprints(app):
     app.register_blueprint(user_bp)
     app.register_blueprint(shopping_bp)
     
+    # Add explicit OPTIONS handler for all routes to ensure CORS preflight works
+    @app.before_request
+    def handle_preflight():
+        if request.method == "OPTIONS":
+            response = app.make_default_options_response()
+            headers = response.headers
+            headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+            headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+            headers['Access-Control-Allow-Credentials'] = 'true'
+            return response
+    
     # Health check endpoint
     @app.route('/health')
     def health_check():
@@ -127,9 +198,39 @@ def register_error_handlers(app):
 if __name__ == '__main__':
     app = create_app()
     
-    # Run the application
-    app.run(
-        host=app.config['HOST'],
-        port=app.config['PORT'],
-        debug=app.config['DEBUG']
-    )
+    # Check if we're running in Docker (presence of certificates directory)
+    is_docker = os.path.exists('/app/certs')
+    is_production = os.environ.get('FLASK_ENV') != 'development' or is_docker
+    
+    # Use Docker paths if in Docker, local paths otherwise
+    if is_docker:
+        cert_path = '/app/certs/cert.pem'
+        key_path = '/app/certs/key.pem'
+    else:
+        cert_path = os.path.join(os.path.dirname(__file__), 'certs', 'cert.pem')
+        key_path = os.path.join(os.path.dirname(__file__), 'certs', 'key.pem')
+    
+    print(f'Cert exists: {os.path.exists(cert_path)} - {cert_path}')
+    print(f'Key exists: {os.path.exists(key_path)} - {key_path}')
+    print(f'Running in Docker: {is_docker}')
+    print(f'Production mode: {is_production}')
+    print(f'FLASK_ENV: {os.environ.get("FLASK_ENV", "not_set")}')
+    
+    # Only start if SSL certificates are present - NO HTTP FALLBACK
+    if os.path.exists(cert_path) and os.path.exists(key_path):
+        print('Starting Flask with HTTPS/SSL...')
+        try:
+            app.run(
+                host=app.config['HOST'],
+                port=app.config['PORT'],
+                debug=app.config['DEBUG'],
+                ssl_context=(cert_path, key_path)
+            )
+        except Exception as e:
+            print(f'SSL error: {e}')
+            print('SSL certificates required. Exiting.')
+            exit(1)
+    else:
+        print('ERROR: SSL certificates required! Server will not start without HTTPS.')
+        print('Please ensure cert.pem and key.pem are available in the certs/ directory.')
+        exit(1)

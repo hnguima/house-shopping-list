@@ -16,22 +16,38 @@ class ShoppingList:
         return str(self.data['_id'])
     
     @classmethod
-    def create(cls, user_id: str, name: str, description: str = "", color: str = "#1976d2") -> 'ShoppingList':
-        """Create a new shopping list"""
+    def create(cls, user_id: str, name: str, description: str = "", color: str = "#1976d2", list_id: str = None, items: List[Dict[str, Any]] = None) -> 'ShoppingList':
+        """Create a new shopping list with optional custom ID and items"""
+        print(f"[ShoppingList.create] Creating list for user {user_id}: {name}, custom_id={list_id}, items_count={len(items) if items else 0}")
+        
         list_data = {
             'user_id': ObjectId(user_id),
             'name': name,
             'description': description,
             'color': color,  # Default to Material-UI primary blue
             'archived': False,
-            'items': [],
+            'items': items or [],  # Use provided items or empty list
             'createdAt': get_unix_timestamp(),
             'updatedAt': get_unix_timestamp()
         }
         
+        # Use custom ID if provided, otherwise let MongoDB generate one
+        if list_id:
+            list_data['_id'] = list_id
+        
+        print(f"[ShoppingList.create] List data prepared: {list_data}")
+        
         shopping_lists_collection = db.get_collection('shopping_lists')
+        print(f"[ShoppingList.create] Got collection: {shopping_lists_collection}")
+        
         result = shopping_lists_collection.insert_one(list_data)
-        list_data['_id'] = result.inserted_id
+        print(f"[ShoppingList.create] Insert result: {result.inserted_id}")
+        
+        # If we didn't provide custom ID, use the generated one
+        if not list_id:
+            list_data['_id'] = result.inserted_id
+        
+        print(f"[ShoppingList.create] Final list data: {list_data}")
         
         return cls(list_data)
     
@@ -51,8 +67,17 @@ class ShoppingList:
     def find_by_id(cls, list_id: str, user_id: str) -> Optional['ShoppingList']:
         """Find shopping list by ID and user ID"""
         shopping_lists_collection = db.get_collection('shopping_lists')
+        
+        # Handle both MongoDB ObjectIds and custom frontend-generated IDs
+        if ObjectId.is_valid(list_id):
+            # Traditional MongoDB ObjectId
+            query_id = ObjectId(list_id)
+        else:
+            # Custom frontend-generated ID (string)
+            query_id = list_id
+        
         list_data = shopping_lists_collection.find_one({
-            '_id': ObjectId(list_id),
+            '_id': query_id,
             'user_id': ObjectId(user_id)
         })
         return cls(list_data) if list_data else None

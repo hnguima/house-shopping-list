@@ -33,11 +33,24 @@ class Database:
         """Create database indexes for optimization"""
         # Users collection indexes
         users = self._db.users
-        users.create_index("email", unique=True)
-        users.create_index("username", unique=True)
-        users.create_index("google_id", unique=True, sparse=True)
+        
+        # Create indexes safely, handling conflicts
+        self._create_index_safely(users, "email", unique=True)
+        self._create_index_safely(users, "username", unique=True, sparse=True)
+        self._create_index_safely(users, "google_id", unique=True, sparse=True)
         
         print("[Database] Indexes created successfully")
+    
+    def _create_index_safely(self, collection, field, **kwargs):
+        """Create an index safely, handling existing index conflicts"""
+        try:
+            collection.create_index(field, **kwargs)
+        except Exception as e:
+            if "IndexKeySpecsConflict" in str(e) or "already exists" in str(e):
+                print(f"[Database] Index on '{field}' already exists, skipping...")
+            else:
+                print(f"[Database] Warning: Could not create index on '{field}': {e}")
+                # Don't raise the exception, just log it
     
     @property
     def client(self):

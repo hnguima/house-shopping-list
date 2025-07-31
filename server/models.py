@@ -102,6 +102,26 @@ class User:
             return False
         return bcrypt.checkpw(password.encode('utf-8'), self.data['password_hash'])
     
+    def link_google_account(self, google_id: str, photo: str = None) -> None:
+        """Link Google OAuth account to existing user"""
+        update_data = {
+            'google_id': google_id,
+            'updatedAt': get_unix_timestamp()
+        }
+        
+        # Update photo if provided and user doesn't have one
+        if photo and not self.data.get('photo'):
+            update_data['photo'] = photo
+        
+        users_collection = db.get_collection('users')
+        users_collection.update_one(
+            {'_id': self.data['_id']},
+            {'$set': update_data}
+        )
+        
+        # Update local data
+        self.data.update(update_data)
+    
     def update(self, update_data: Dict[str, Any]) -> None:
         """Update user data"""
         update_data['updatedAt'] = get_unix_timestamp()
