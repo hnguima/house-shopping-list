@@ -3,7 +3,59 @@
  * Handles JWT tokens, automatic logout on expiration, and consistent error handling
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+console.log("[ApiClient] Module loading...");
+
+import { Preferences } from "@capacitor/preferences";
+
+// Build API URL from environment variables
+const getApiBaseUrl = (): string => {
+  console.log("[ApiClient] Building API URL...");
+  console.log("[ApiClient] VITE_API_URL:", import.meta.env.VITE_API_URL);
+  console.log(
+    "[ApiClient] VITE_TUNNEL_DOMAIN:",
+    import.meta.env.VITE_TUNNEL_DOMAIN
+  );
+  console.log(
+    "[ApiClient] VITE_API_SUBDOMAIN:",
+    import.meta.env.VITE_API_SUBDOMAIN
+  );
+
+  // If VITE_API_URL is explicitly set, use it
+  if (import.meta.env.VITE_API_URL) {
+    console.log(
+      "[ApiClient] Using explicit VITE_API_URL:",
+      import.meta.env.VITE_API_URL
+    );
+    return import.meta.env.VITE_API_URL;
+  }
+
+  // If tunnel configuration is provided, build URL from subdomain and domain
+  if (
+    import.meta.env.VITE_TUNNEL_DOMAIN &&
+    import.meta.env.VITE_API_SUBDOMAIN
+  ) {
+    const tunnelUrl = `https://${import.meta.env.VITE_API_SUBDOMAIN}.${
+      import.meta.env.VITE_TUNNEL_DOMAIN
+    }`;
+    console.log("[ApiClient] Using tunnel URL:", tunnelUrl);
+    return tunnelUrl;
+  }
+
+  // Default to localhost for development
+  const localUrl = "http://localhost:5000";
+  console.log("[ApiClient] Using localhost for development:", localUrl);
+  return localUrl;
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+// Debug logging for API URL configuration
+console.log("[ApiClient] Configuration:", {
+  API_BASE_URL,
+  VITE_API_URL: import.meta.env.VITE_API_URL,
+  VITE_TUNNEL_DOMAIN: import.meta.env.VITE_TUNNEL_DOMAIN,
+  VITE_API_SUBDOMAIN: import.meta.env.VITE_API_SUBDOMAIN,
+});
 const ACCESS_TOKEN_KEY = "access_token";
 const REFRESH_TOKEN_KEY = "refresh_token";
 
@@ -37,38 +89,66 @@ class ApiClient {
   /**
    * Get stored access token
    */
-  private getAccessToken(): string | null {
-    return localStorage.getItem(ACCESS_TOKEN_KEY);
+  private async getAccessToken(): Promise<string | null> {
+    try {
+      const { value } = await Preferences.get({ key: ACCESS_TOKEN_KEY });
+      return value;
+    } catch (error) {
+      console.error("[ApiClient] Error getting access token:", error);
+      return null;
+    }
   }
 
   /**
    * Get stored refresh token
    */
-  private getRefreshToken(): string | null {
-    return localStorage.getItem(REFRESH_TOKEN_KEY);
+  private async getRefreshToken(): Promise<string | null> {
+    try {
+      const { value } = await Preferences.get({ key: REFRESH_TOKEN_KEY });
+      return value;
+    } catch (error) {
+      console.error("[ApiClient] Error getting refresh token:", error);
+      return null;
+    }
   }
 
   /**
    * Store authentication tokens
    */
-  setTokens(accessToken: string, refreshToken: string): void {
-    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  async setTokens(accessToken: string, refreshToken: string): Promise<void> {
+    try {
+      await Promise.all([
+        Preferences.set({ key: ACCESS_TOKEN_KEY, value: accessToken }),
+        Preferences.set({ key: REFRESH_TOKEN_KEY, value: refreshToken })
+      ]);
+    } catch (error) {
+      console.error("[ApiClient] Error setting tokens:", error);
+    }
   }
 
   /**
    * Store access token (for token refresh)
    */
-  setAccessToken(token: string): void {
-    localStorage.setItem(ACCESS_TOKEN_KEY, token);
+  async setAccessToken(token: string): Promise<void> {
+    try {
+      await Preferences.set({ key: ACCESS_TOKEN_KEY, value: token });
+    } catch (error) {
+      console.error("[ApiClient] Error setting access token:", error);
+    }
   }
 
   /**
    * Clear all stored tokens (logout)
    */
-  clearTokens(): void {
-    localStorage.removeItem(ACCESS_TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
+  async clearTokens(): Promise<void> {
+    try {
+      await Promise.all([
+        Preferences.remove({ key: ACCESS_TOKEN_KEY }),
+        Preferences.remove({ key: REFRESH_TOKEN_KEY })
+      ]);
+    } catch (error) {
+      console.error("[ApiClient] Error clearing tokens:", error);
+    }
   }
 
   /**
@@ -82,7 +162,9 @@ class ApiClient {
    * Backward compatibility - clear all tokens
    */
   clearToken(): void {
-    this.clearTokens();
+    this.clearTokens().catch(error => {
+      console.error("[ApiClient] Error clearing tokens:", error);
+    });
   }
 
   /**
@@ -101,7 +183,7 @@ class ApiClient {
    * Get valid access token, refresh if needed
    */
   private async getValidToken(): Promise<string | null> {
-    const accessToken = this.getAccessToken();
+    const accessToken = await this.getAccessToken();
 
     if (!accessToken) {
       console.warn("[ApiClient] No access token found");
@@ -115,10 +197,10 @@ class ApiClient {
       // Try to refresh the token
       const refreshed = await this.refreshAccessToken();
       if (refreshed) {
-        return this.getAccessToken();
+        return await this.getAccessToken();
       } else {
         console.warn("[ApiClient] Token refresh failed, clearing tokens");
-        this.clearTokens();
+        await this.clearTokens();
         if (this.onTokenExpired) {
           this.onTokenExpired();
         }
@@ -134,7 +216,7 @@ class ApiClient {
    */
   private async refreshAccessToken(): Promise<boolean> {
     try {
-      const refreshToken = this.getRefreshToken();
+      const refreshToken = await this.getRefreshToken();
 
       if (!refreshToken) {
         console.warn("[ApiClient] No refresh token available");
@@ -156,7 +238,7 @@ class ApiClient {
 
       if (response.ok) {
         const data = await response.json();
-        this.setAccessToken(data.access_token);
+        await this.setAccessToken(data.access_token);
         console.log("[ApiClient] Access token refreshed successfully");
         return true;
       } else {
@@ -186,7 +268,9 @@ class ApiClient {
 
     if (isAuthError) {
       console.warn("[ApiClient] Authentication error detected:", errorMessage);
-      this.clearTokens();
+      this.clearTokens().catch(error => {
+        console.error("[ApiClient] Error clearing tokens on auth error:", error);
+      });
       if (this.onTokenExpired) {
         // Use setTimeout to avoid blocking the current execution
         setTimeout(() => {
@@ -352,12 +436,27 @@ class ApiClient {
     return this.get("/api/auth/me");
   }
 
+  // Lightweight timestamp check methods for sync optimization
+  async getUserTimestamp() {
+    return this.get("/api/user/sync-check");
+  }
+
+  async getShoppingListsTimestamps(includeArchived = false) {
+    includeArchived = false;
+    const params = includeArchived ? "?include_archived=true" : "";
+    return this.get(`/api/shopping/sync-check${params}`);
+  }
+
+  async getShoppingListTimestamp(listId: string) {
+    return this.get(`/api/shopping/lists/${listId}/timestamp`);
+  }
+
   async logout() {
     try {
       await this.post("/api/auth/logout");
     } finally {
       // Always clear tokens locally, even if logout request fails
-      this.clearTokens();
+      await this.clearTokens();
     }
   }
 
@@ -379,8 +478,17 @@ class ApiClient {
   }
 
   // Session management
-  hasValidSession(): boolean {
-    return !!this.getAccessToken() && !!this.getRefreshToken();
+  async hasValidSession(): Promise<boolean> {
+    try {
+      const [accessToken, refreshToken] = await Promise.all([
+        this.getAccessToken(),
+        this.getRefreshToken()
+      ]);
+      return !!accessToken && !!refreshToken;
+    } catch (error) {
+      console.error("[ApiClient] Error checking session validity:", error);
+      return false;
+    }
   }
 
   // User endpoints
@@ -395,8 +503,7 @@ class ApiClient {
   }
 
   async updateUserProfile(profileData: any): Promise<any> {
-    const response = await this.put("/api/user/profile", profileData);
-    return response.data.user;
+    return this.put("/api/user/profile", profileData);
   }
 
   async uploadProfilePhoto(base64Data: string) {
@@ -409,7 +516,13 @@ class ApiClient {
     return this.get(`/api/shopping/lists${params}`);
   }
 
-  async createShoppingList(data: { name: string; description?: string }) {
+  async createShoppingList(data: {
+    _id?: string;
+    name: string;
+    description?: string;
+    color?: string;
+    items?: any[]; // Accept items array
+  }) {
     return this.post("/api/shopping/lists", data);
   }
 
@@ -419,7 +532,12 @@ class ApiClient {
 
   async updateShoppingList(
     listId: string,
-    data: { name?: string; description?: string; archived?: boolean }
+    data: {
+      name?: string;
+      description?: string;
+      archived?: boolean;
+      items?: any[]; // Accept items array
+    }
   ) {
     return this.put(`/api/shopping/lists/${listId}`, data);
   }
