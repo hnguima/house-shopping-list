@@ -10,13 +10,14 @@ import {
   Alert,
   CircularProgress,
   Link,
-  styled
+  styled,
 } from "@mui/material";
 import GoogleIcon from "@mui/icons-material/Google";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import LoginIcon from "@mui/icons-material/Login";
 import apiClient from "../utils/apiClient";
 import { SessionManager } from "../utils/sessionManager";
+import { handleOAuthLogin } from "../utils/authUtils";
 
 const LoginContainer = styled(Box)(({ theme }: any) => ({
   display: "flex",
@@ -105,7 +106,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onError }) => {
       }
 
       // Store JWT tokens using new session management
-      const loginSuccess = SessionManager.handleLoginResponse(response.data);
+      const loginSuccess = await SessionManager.handleLoginResponse(response.data);
       if (!loginSuccess) {
         throw new Error("Failed to store authentication tokens");
       }
@@ -142,10 +143,32 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onError }) => {
     }
   };
 
-  const handleGoogleLogin = () => {
-    setLoading(true);
-    // Redirect to Google OAuth
-    window.location.href = `${import.meta.env.VITE_API_URL}/api/auth/google`;
+  const handleGoogleLogin = async () => {
+    try {
+      setLoading(true);
+      console.log("[LoginScreen] Starting Google OAuth");
+
+      const result = await handleOAuthLogin();
+
+      if (result.success && result.user) {
+        console.log("[LoginScreen] OAuth success:", result.user);
+        onLogin(result.user);
+      } else {
+        console.error("[LoginScreen] OAuth failed:", result.error);
+        setError(result.error || "Google authentication failed");
+        onError(result.error || "Google authentication failed");
+      }
+    } catch (error) {
+      console.error("[LoginScreen] Google Auth error:", error);
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Google authentication failed. Please try again.";
+      setError(errorMessage);
+      onError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const toggleMode = () => {

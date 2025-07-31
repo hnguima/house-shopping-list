@@ -3,8 +3,6 @@ import { useTranslation } from "react-i18next";
 import {
   Paper,
   Box,
-  Alert,
-  Snackbar,
   Typography,
   TextField,
   Switch,
@@ -13,14 +11,12 @@ import {
   FormControl,
   InputLabel,
   FormControlLabel,
+  styled,
 } from "@mui/material";
-import { styled } from "@mui/material";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
 import ProfilePhoto from "../components/ProfilePhoto";
 import type { User } from "../types/user";
-import { UserStorageManager } from "../utils/userStorageManager";
-import { useAutoSync } from "../hooks/useAutoSync";
 
 interface UserProfileScreenProps {
   themeMode: "light" | "dark";
@@ -47,20 +43,12 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  // Enable auto-sync and local update marking
-  useAutoSync("profile");
-
+  // Local UI state
   const [editName, setEditName] = useState(user.name || "");
   const [photoLoading, setPhotoLoading] = useState(false);
-  const [snackbar, setSnackbar] = useState<{
-    open: boolean;
-    message: string;
-    severity: "success" | "error";
-  }>({
-    open: false,
-    message: "",
-    severity: "success",
-  });
+
+  // No longer need subscription-based updates with the new simple cache system
+  // The new system is more direct and doesn't require complex event handling
 
   const handlePhotoUpload = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -68,39 +56,34 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Check file size (limit to 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      setSnackbar({
-        open: true,
-        message: "Photo must be smaller than 5MB",
-        severity: "error",
-      });
-      return;
-    }
-
     setPhotoLoading(true);
     try {
-      // Use UserStorageManager to handle base64 conversion and storage
-      await UserStorageManager.updateUserPhoto(file);
-
-      // Get the updated user data
-      const updatedUser = await UserStorageManager.getUser();
-      if (updatedUser) {
-        onUserUpdate(updatedUser);
-      }
-
-      setSnackbar({
-        open: true,
-        message: "Photo updated successfully",
-        severity: "success",
+      // Convert file to base64
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
       });
+
+      const base64Photo = await base64Promise;
+
+      // Update user photo with new system
+      const updatedUser = {
+        ...user,
+        photo: base64Photo,
+        preferences: {
+          ...user.preferences,
+          theme: themeMode,
+          language: language,
+        },
+      };
+      onUserUpdate(updatedUser);
     } catch (error) {
       console.error("Error uploading photo:", error);
-      setSnackbar({
-        open: true,
-        message: "Failed to update photo",
-        severity: "error",
-      });
     } finally {
       setPhotoLoading(false);
     }
@@ -127,20 +110,9 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
           },
         };
         onUserUpdate(updatedUser);
-
-        setSnackbar({
-          open: true,
-          message: "Photo captured successfully",
-          severity: "success",
-        });
       }
     } catch (error) {
       console.error("Error capturing photo:", error);
-      setSnackbar({
-        open: true,
-        message: "Failed to capture photo",
-        severity: "error",
-      });
     } finally {
       setPhotoLoading(false);
     }
@@ -167,50 +139,39 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
           },
         };
         onUserUpdate(updatedUser);
-
-        setSnackbar({
-          open: true,
-          message: "Photo selected successfully",
-          severity: "success",
-        });
       }
     } catch (error) {
       console.error("Error selecting photo:", error);
-      setSnackbar({
-        open: true,
-        message: "Failed to select photo",
-        severity: "error",
-      });
     } finally {
       setPhotoLoading(false);
     }
   };
 
   const handleNameSave = async () => {
+    if (editName.trim() === user.name) return; // No change
+
     console.log("[UserProfile] Saving name change:", {
       old: user.name,
       new: editName,
     });
 
-    // Create updated user with current name AND current preferences from props
-    const updatedUser = {
-      ...user,
-      name: editName,
-      preferences: {
-        ...user.preferences,
-        theme: themeMode, // Use current theme from props
-        language: language, // Use current language from props
-      },
-    };
+    try {
+      // Update user data with new cache system
+      const updatedUser = {
+        ...user,
+        name: editName.trim(),
+        preferences: {
+          ...user.preferences,
+          theme: themeMode,
+          language: language,
+        },
+      };
 
-    // Update the UI state and save to storage (this automatically updates timestamp)
-    onUserUpdate(updatedUser);
+      onUserUpdate(updatedUser);
 
-    setSnackbar({
-      open: true,
-      message: "Name updated successfully",
-      severity: "success",
-    });
+    } catch (error) {
+      console.error("Error updating name:", error);
+    }
   };
 
   return (
@@ -284,7 +245,20 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
           <Select
             value={language}
             label={t("language")}
-            onChange={(e) => setLanguage(e.target.value)}
+            onChange={(e) => {
+              const newLanguage = e.target.value;
+              // Update with new system
+              setLanguage(newLanguage);
+
+              const updatedUser = {
+                ...user,
+                preferences: {
+                  ...user.preferences,
+                  language: newLanguage,
+                },
+              };
+              onUserUpdate(updatedUser);
+            }}
           >
             <MenuItem value="en">{t("en")}</MenuItem>
             <MenuItem value="fr">{t("fr")}</MenuItem>
@@ -298,28 +272,27 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
           control={
             <Switch
               checked={themeMode === "dark"}
-              onChange={(e) =>
-                setThemeMode(e.target.checked ? "dark" : "light")
-              }
+              onChange={(e) => {
+                const newTheme = e.target.checked
+                  ? ("dark" as const)
+                  : ("light" as const);
+                // Update with new system
+                setThemeMode(newTheme);
+
+                const updatedUser = {
+                  ...user,
+                  preferences: {
+                    ...user.preferences,
+                    theme: newTheme,
+                  },
+                };
+                onUserUpdate(updatedUser);
+              }}
             />
           }
           label={`${t("theme")}: ${t(themeMode)}`}
         />
       </Pane>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-      >
-        <Alert
-          onClose={() => setSnackbar({ ...snackbar, open: false })}
-          severity={snackbar.severity}
-          sx={{ width: "100%" }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
     </Box>
   );
 };

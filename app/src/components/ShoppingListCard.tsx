@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Card,
@@ -30,8 +30,6 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import PaletteIcon from "@mui/icons-material/Palette";
 import type { ShoppingList, UpdateShoppingListData } from "../types/shopping";
-import apiClient from "../utils/apiClient";
-import { ShoppingStorageManager } from "../utils/shoppingStorageManager";
 import {
   getContrastTextColor,
   getThemeAwareCardColor,
@@ -72,9 +70,7 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
   const isDarkTheme = theme.palette.mode === "dark";
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [newItemText, setNewItemText] = useState("");
-  const [addingItem, setAddingItem] = useState(false);
   const [editData, setEditData] = useState<UpdateShoppingListData>({
     name: list.name,
     description: list.description,
@@ -93,6 +89,33 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
   const addItemInputRef = useRef<HTMLInputElement>(null);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
 
+  // Card-level swipe state for deleting entire lists
+  const [cardSwipeStartX, setCardSwipeStartX] = useState<number | null>(null);
+  const [cardSwipeOffset, setCardSwipeOffset] = useState<number>(0);
+  const [isCardSwipeActive, setIsCardSwipeActive] = useState<boolean>(false);
+  const [cardSwipeProgress, setCardSwipeProgress] = useState<number>(0);
+
+  // Debounced handlers for better performance
+  const debouncedInputRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleTextInputChange = useCallback(
+    (value: string, setter: (value: string) => void) => {
+      // Clear existing timeout
+      if (debouncedInputRef.current) {
+        clearTimeout(debouncedInputRef.current);
+      }
+
+      // Update immediately for responsive UI
+      setter(value);
+
+      // Debounce any additional processing if needed
+      debouncedInputRef.current = setTimeout(() => {
+        // Any additional processing can go here
+      }, 150);
+    },
+    []
+  );
+
   const menuOpen = Boolean(anchorEl);
   const completedItems = list.items.filter((item) => item.completed).length;
   const totalItems = list.items.length;
@@ -100,109 +123,131 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
     totalItems > 0 ? (completedItems / totalItems) * 100 : 0;
 
   // Sort items by creation order (oldest first - newest items go to bottom)
-  const sortedItems = [...list.items].sort((a, b) => {
-    const aTime = Number(a.createdAt ?? a.updatedAt ?? 0);
-    const bTime = Number(b.createdAt ?? b.updatedAt ?? 0);
-    return aTime - bTime; // Oldest first (creation order)
-  });
+  const sortedItems = useMemo(() => {
+    return [...list.items].sort((a, b) => {
+      const aTime = Number(a.createdAt ?? a.updatedAt ?? 0);
+      const bTime = Number(b.createdAt ?? b.updatedAt ?? 0);
+      return aTime - bTime; // Oldest first (creation order)
+    });
+  }, [list.items]);
 
-  const handleAddItem = async () => {
+  const handleAddItem = useCallback(async () => {
     if (!newItemText.trim()) return;
 
-    try {
-      setAddingItem(true);
-      const response = await apiClient.addItemToList(list._id, {
-        name: newItemText.trim(),
-        quantity: 1,
-      });
-      const updatedList: ShoppingList = response.data.shopping_list;
+    const trimmedName = newItemText.trim();
 
-      // Update local storage
-      await ShoppingStorageManager.updateShoppingList(updatedList);
+    // Create new item for cache-only update
+    const newItem = {
+      id: `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, // Unique local ID
+      name: trimmedName,
+      quantity: 1,
+      category: "",
+      notes: "",
+      completed: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
 
-      // Update UI
-      onUpdate(updatedList);
-      setNewItemText("");
-    } catch (error) {
-      console.error("Error adding item:", error);
-    } finally {
-      setAddingItem(false);
-      // Ensure focus returns to the input field after the state update
-      setTimeout(() => {
-        if (addItemInputRef.current) {
-          addItemInputRef.current.focus();
-        }
-      }, 50);
+    // Cache-only update - add item to UI and local storage
+    const updatedList = {
+      ...list,
+      items: [...list.items, newItem],
+      updatedAt: Date.now(),
+    };
+
+    // Clear input and update UI immediately
+    setNewItemText("");
+    onUpdate(updatedList);
+
+    // Keep focus on input immediately to prevent keyboard from closing
+    if (addItemInputRef.current) {
+      addItemInputRef.current.focus();
     }
-  };
 
-  const handleToggleItem = async (itemId: string, completed: boolean) => {
-    try {
-      const response = await apiClient.updateItemInList(list._id, itemId, {
-        completed,
-      });
-      const updatedList: ShoppingList = response.data.shopping_list;
+    // Note: Sync is handled automatically by the unified caching system
+  }, [newItemText, list, onUpdate]);
 
-      // Update local storage
-      await ShoppingStorageManager.updateShoppingList(updatedList);
+  const handleToggleItem = useCallback(
+    async (itemId: string, completed: boolean) => {
+      // Cache-only update - no API calls, only local storage updates
+      const updatedItems = list.items.map((item) =>
+        item.id === itemId
+          ? { ...item, completed, updatedAt: new Date().toISOString() }
+          : item
+      );
+      const updatedList = {
+        ...list,
+        items: updatedItems,
+        updatedAt: Date.now(),
+      };
 
-      // Update UI
+      // Update UI immediately and save to cache
       onUpdate(updatedList);
-    } catch (error) {
-      console.error("Error toggling item:", error);
-    }
-  };
 
-  const handleSwipeStart = (e: React.TouchEvent, itemId: string) => {
-    setSwipeStartX(e.touches[0].clientX);
-    setSwipeItemId(itemId);
-    setIsSwipeActive(true);
-    setSwipeProgress(0);
-    setSwipeOffset(0);
-  };
+      // Note: Sync is handled automatically by the unified caching system
+    },
+    [list, onUpdate]
+  );
 
-  const handleSwipeMove = (e: React.TouchEvent, item: any) => {
-    if (swipeStartX === null || swipeItemId !== item.id || !isSwipeActive)
-      return;
+  const handleSwipeStart = useCallback(
+    (e: React.TouchEvent, itemId: string) => {
+      // Prevent card swipe when starting item swipe
+      e.stopPropagation();
+      setSwipeStartX(e.touches[0].clientX);
+      setSwipeItemId(itemId);
+      setIsSwipeActive(true);
+      setSwipeProgress(0);
+      setSwipeOffset(0);
+    },
+    []
+  );
 
-    const currentX = e.touches[0].clientX;
-    const diffX = currentX - swipeStartX; // Keep sign for direction
-    const absDistance = Math.abs(diffX);
-    const progress = Math.min(absDistance / 100, 1); // Progress from 0 to 1 (100px = full swipe)
+  const handleSwipeMove = useCallback(
+    (e: React.TouchEvent, item: any) => {
+      if (swipeStartX === null || swipeItemId !== item.id || !isSwipeActive)
+        return;
 
-    setSwipeProgress(progress);
-    setSwipeOffset(diffX); // Store the actual offset for visual sliding
-  };
+      // Prevent card swipe when moving item swipe
+      e.stopPropagation();
+
+      const currentX = e.touches[0].clientX;
+      const diffX = currentX - swipeStartX; // Keep sign for direction
+      const absDistance = Math.abs(diffX);
+      const progress = Math.min(absDistance / 100, 1); // Progress from 0 to 1 (100px = full swipe)
+
+      setSwipeProgress(progress);
+      setSwipeOffset(diffX); // Store the actual offset for visual sliding
+    },
+    [swipeStartX, swipeItemId, isSwipeActive]
+  );
 
   const handleSaveItemEdit = async () => {
     if (!editingItemId || !tempItemName.trim()) {
       handleCancelItemEdit();
       return;
     }
-    try {
-      const response = await apiClient.updateItemInList(
-        list._id,
-        editingItemId,
-        {
-          name: tempItemName.trim(),
-        }
-      );
-      const updatedList: ShoppingList = response.data.shopping_list;
 
-      // Update local storage
-      await ShoppingStorageManager.updateShoppingList(updatedList);
+    // Cache-only update - update UI and local storage immediately
+    const updatedItems = list.items.map((item) =>
+      item.id === editingItemId
+        ? {
+            ...item,
+            name: tempItemName.trim(),
+            updatedAt: new Date().toISOString(),
+          }
+        : item
+    );
+    const updatedList = { ...list, items: updatedItems, updatedAt: Date.now() };
 
-      // Update UI
-      onUpdate(updatedList);
+    // Reset editing state immediately for better UX
+    setEditingItem(false);
+    setEditingItemId(null);
+    setTempItemName("");
 
-      // Reset editing state
-      setEditingItem(false);
-      setEditingItemId(null);
-      setTempItemName("");
-    } catch (error) {
-      console.error("Error updating item:", error);
-      handleCancelItemEdit();
-    }
+    // Update UI immediately
+    onUpdate(updatedList);
+
+    // Note: Sync is handled automatically by the unified caching system
   };
 
   const handleCancelItemEdit = () => {
@@ -211,35 +256,98 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
     setTempItemName("");
   };
 
-  const handleSwipeEnd = async (e: React.TouchEvent, item: any) => {
-    if (swipeStartX === null || swipeItemId !== item.id) return;
+  const handleSwipeEnd = useCallback(
+    async (e: React.TouchEvent, item: any) => {
+      if (swipeStartX === null || swipeItemId !== item.id) return;
 
-    const endX = e.changedTouches[0].clientX;
-    const diffX = Math.abs(endX - swipeStartX);
+      // Prevent card swipe when ending item swipe
+      e.stopPropagation();
 
-    // If swipe distance is more than 100px in any direction, delete the item
-    if (diffX > 100) {
-      try {
-        const response = await apiClient.removeItemFromList(list._id, item.id);
-        const updatedList: ShoppingList = response.data.shopping_list;
+      const endX = e.changedTouches[0].clientX;
+      const diffX = Math.abs(endX - swipeStartX);
 
-        // Update local storage
-        await ShoppingStorageManager.updateShoppingList(updatedList);
+      // Reset swipe state first
+      setSwipeStartX(null);
+      setSwipeItemId(null);
+      setIsSwipeActive(false);
+      setSwipeProgress(0);
+      setSwipeOffset(0);
 
-        // Update UI
+      // If swipe distance is more than 100px in any direction, delete the item
+      if (diffX > 100) {
+        // Cache-only update - remove item from UI and local storage immediately
+        const updatedItems = list.items.filter(
+          (listItem) => listItem.id !== item.id
+        );
+        const updatedList = {
+          ...list,
+          items: updatedItems,
+          updatedAt: Date.now(),
+        };
+
+        // Update UI immediately for better UX
         onUpdate(updatedList);
-      } catch (error) {
-        console.error("Error deleting item:", error);
-      }
-    }
 
-    // Reset swipe state
-    setSwipeStartX(null);
-    setSwipeItemId(null);
-    setIsSwipeActive(false);
-    setSwipeProgress(0);
-    setSwipeOffset(0);
-  };
+        // Note: Sync is handled automatically by the unified caching system
+      }
+    },
+    [swipeStartX, swipeItemId, list, onUpdate]
+  );
+
+  const handleCardSwipeStart = useCallback(
+    (e: React.TouchEvent) => {
+      // Only start card swipe if we're not already swiping an item
+      if (isSwipeActive) return;
+
+      // Allow card swipe from anywhere on the card, including header
+      setCardSwipeStartX(e.touches[0].clientX);
+      setIsCardSwipeActive(true);
+      setCardSwipeProgress(0);
+      setCardSwipeOffset(0);
+    },
+    [isSwipeActive]
+  );
+
+  const handleCardSwipeMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (cardSwipeStartX === null || !isCardSwipeActive) return;
+
+      const currentX = e.touches[0].clientX;
+      const diffX = currentX - cardSwipeStartX;
+      const absDistance = Math.abs(diffX);
+      const progress = Math.min(absDistance / 150, 1); // 150px for full swipe (more than items)
+
+      setCardSwipeProgress(progress);
+      setCardSwipeOffset(diffX);
+    },
+    [cardSwipeStartX, isCardSwipeActive]
+  );
+
+  const handleCardSwipeEnd = useCallback(
+    async (e: React.TouchEvent) => {
+      if (cardSwipeStartX === null) return;
+
+      const endX = e.changedTouches[0].clientX;
+      const diffX = Math.abs(endX - cardSwipeStartX);
+
+      // Reset card swipe state first
+      setCardSwipeStartX(null);
+      setIsCardSwipeActive(false);
+      setCardSwipeProgress(0);
+      setCardSwipeOffset(0);
+
+      // If swipe distance is more than 150px, delete the entire list
+      if (diffX > 150) {
+        try {
+          // Call the onDelete handler passed from parent
+          onDelete(list._id);
+        } catch (error) {
+          console.error("Error deleting list:", error);
+        }
+      }
+    },
+    [cardSwipeStartX, list._id, onDelete]
+  );
 
   const handleListNameClick = (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -249,22 +357,21 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
 
   const handleSaveListName = async () => {
     if (!tempListName.trim()) return;
-    try {
-      const response = await apiClient.updateShoppingList(list._id, {
-        name: tempListName.trim(),
-        description: list.description,
-      });
-      const updatedList: ShoppingList = response.data.shopping_list;
 
-      // Update local storage
-      await ShoppingStorageManager.updateShoppingList(updatedList);
+    const trimmedName = tempListName.trim();
 
-      // Update UI
-      onUpdate(updatedList);
-    } catch (error) {
-      console.error("Error updating list name:", error);
-    }
+    // Cache-only update - update UI and local storage immediately
+    const updatedList = {
+      ...list,
+      name: trimmedName,
+      updatedAt: Date.now(),
+    };
+
+    // Reset editing state and update UI immediately
     setEditingListName(false);
+    onUpdate(updatedList);
+
+    // Note: Sync is handled automatically by the unified caching system
   };
 
   const handleCancelListNameEdit = () => {
@@ -273,24 +380,17 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
   };
 
   const handleColorSelect = async (color: string) => {
-    try {
-      const updateData: any = {
-        name: list.name,
-        description: list.description,
-        color: color,
-      };
+    // Cache-only update - update UI and local storage immediately
+    const updatedList = {
+      ...list,
+      color: color,
+      updatedAt: Date.now(),
+    };
 
-      const response = await apiClient.updateShoppingList(list._id, updateData);
-      const updatedList: ShoppingList = response.data.shopping_list;
+    // Update UI immediately
+    onUpdate(updatedList);
 
-      // Update local storage
-      await ShoppingStorageManager.updateShoppingList(updatedList);
-
-      // Update UI
-      onUpdate(updatedList);
-    } catch (error) {
-      console.error("Error updating list color:", error);
-    }
+    // Note: Sync is handled automatically by the unified caching system
   };
 
   const handleEditDialogColorSelect = (color: string) => {
@@ -335,27 +435,41 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
   };
 
   const handleSaveEdit = async () => {
-    try {
-      const response = await apiClient.updateShoppingList(list._id, editData);
-      const updatedList: ShoppingList = response.data.shopping_list;
+    // Cache-only update - update UI and local storage immediately
+    const updatedList = {
+      ...list,
+      name: editData.name || list.name, // Fallback to current name if undefined
+      description: editData.description || list.description, // Fallback to current description if undefined
+      color: editData.color || list.color, // Fallback to current color if undefined
+      updatedAt: Date.now(),
+    };
 
-      onUpdate(updatedList);
-      setEditDialogOpen(false);
-    } catch (error) {
-      console.error("[ShoppingListCard] Error updating list:", error);
-    }
+    onUpdate(updatedList);
+    setEditDialogOpen(false);
+
+    // Note: Sync is handled automatically by the unified caching system
   };
 
   return (
     <>
       <StyledCard
+        onTouchStart={handleCardSwipeStart}
+        onTouchMove={handleCardSwipeMove}
+        onTouchEnd={handleCardSwipeEnd}
         sx={{
-          backgroundColor: getThemeAwareCardColor(
-            list.color || "#1976d2",
-            isDarkTheme
-          ),
+          backgroundColor: isCardSwipeActive
+            ? `rgba(255, 0, 0, ${cardSwipeProgress * 0.2})` // Red background on swipe
+            : getThemeAwareCardColor(list.color || "#1976d2", isDarkTheme),
           border: `1px solid ${list.color || "#1976d2"}20`,
-          overflow: "hidden", // This helps remove any border artifacts
+          overflow: "hidden",
+          position: "relative", // Ensure transform is contained
+          transform: isCardSwipeActive
+            ? `translateX(${cardSwipeOffset}px)` // Slide the entire card
+            : "translateX(0px)",
+          transition: isCardSwipeActive
+            ? "background-color 0.1s ease"
+            : "all 0.2s ease",
+          willChange: isCardSwipeActive ? "transform" : "auto", // Optimize transforms
         }}
       >
         <CardContent
@@ -368,6 +482,28 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
           }}
         >
           <ListHeader
+            data-header
+            onTouchStart={(e) => {
+              // Only allow header swipe if not editing and not clicking menu
+              const target = e.target as HTMLElement;
+              if (
+                !editingListName &&
+                !target.closest("button") &&
+                !target.closest("input")
+              ) {
+                handleCardSwipeStart(e);
+              }
+            }}
+            onTouchMove={(e) => {
+              if (isCardSwipeActive) {
+                handleCardSwipeMove(e);
+              }
+            }}
+            onTouchEnd={(e) => {
+              if (isCardSwipeActive) {
+                handleCardSwipeEnd(e);
+              }
+            }}
             sx={{
               margin: 0,
               padding: 1,
@@ -533,7 +669,9 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
                     <TextField
                       variant="standard"
                       value={tempItemName}
-                      onChange={(e) => setTempItemName(e.target.value)}
+                      onChange={(e) =>
+                        handleTextInputChange(e.target.value, setTempItemName)
+                      }
                       onKeyDown={(e) => {
                         e.stopPropagation();
                         if (e.key === "Enter") {
@@ -549,6 +687,18 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
                       autoFocus
                       fullWidth
                       size="small"
+                      inputProps={{
+                        onFocus: (e: React.FocusEvent<HTMLInputElement>) => {
+                          // Scroll input into view on mobile to avoid keyboard overlap
+                          setTimeout(() => {
+                            e.target.scrollIntoView({
+                              behavior: "smooth",
+                              block: "center",
+                              inline: "nearest",
+                            });
+                          }, 100);
+                        },
+                      }}
                       sx={{
                         flex: 1,
                         pr: 1,
@@ -622,15 +772,36 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
                   size="small"
                   fullWidth
                   value={newItemText}
-                  onChange={(e) => setNewItemText(e.target.value)}
+                  onChange={(e) =>
+                    handleTextInputChange(e.target.value, setNewItemText)
+                  }
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
                       e.stopPropagation();
                       handleAddItem();
+                      // Ensure the input keeps focus after Enter press
+                      setTimeout(() => {
+                        if (addItemInputRef.current) {
+                          addItemInputRef.current.focus();
+                        }
+                      }, 0);
                     }
                   }}
-                  disabled={addingItem}
+                  onFocus={(e) => {
+                    // Scroll input into view on mobile to avoid keyboard overlap
+                    setTimeout(() => {
+                      e.target.scrollIntoView({
+                        behavior: "smooth",
+                        block: "center",
+                        inline: "nearest",
+                      });
+                    }, 300); // Longer delay for keyboard animation
+                  }}
+                  onBlur={() => {
+                    // Input blur handling no longer needed since we're not making API calls
+                  }}
+                  disabled={false}
                   sx={{
                     flex: 1,
                     pr: 1,
@@ -764,4 +935,4 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
   );
 };
 
-export default ShoppingListCard;
+export default React.memo(ShoppingListCard);
