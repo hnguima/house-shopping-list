@@ -21,6 +21,8 @@ import {
   ListItemText,
   Checkbox,
   useTheme,
+  Avatar,
+  Fab,
 } from "@mui/material";
 import { styled } from "@mui/system";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
@@ -29,6 +31,8 @@ import ArchiveIcon from "@mui/icons-material/Archive";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import PaletteIcon from "@mui/icons-material/Palette";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import PersonIcon from "@mui/icons-material/Person";
 import type { ShoppingList, UpdateShoppingListData } from "../types/shopping";
 import {
   getContrastTextColor,
@@ -39,6 +43,7 @@ import InlineColorPicker from "./InlineColorPicker";
 
 const StyledCard = styled(Card)(({ theme }: any) => ({
   marginBottom: theme.spacing(2),
+  position: "relative",
   transition: "box-shadow 0.2s ease",
   "&:hover": {
     boxShadow: theme.shadows?.[4] || "0 4px 8px rgba(0,0,0,0.12)",
@@ -57,6 +62,8 @@ interface ShoppingListCardProps {
   onUpdate: (updatedList: ShoppingList) => void;
   onDelete: (listId: string) => void;
   onArchive: (listId: string) => void;
+  onComplete?: (listId: string) => void;
+  currentUserId?: string;
 }
 
 const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
@@ -64,6 +71,8 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
   onUpdate,
   onDelete,
   onArchive,
+  onComplete,
+  currentUserId,
 }) => {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -121,6 +130,11 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
   const totalItems = list.items.length;
   const completionRate =
     totalItems > 0 ? (completedItems / totalItems) * 100 : 0;
+
+  // Check if this list is in a home and get permissions
+  const isInHome = Boolean(list.home_id);
+  // List can be completed if all items are completed and there are items
+  const canComplete = totalItems > 0 && completedItems === totalItems;
 
   // Sort items by creation order (oldest first - newest items go to bottom)
   const sortedItems = useMemo(() => {
@@ -434,6 +448,13 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
     onDelete(list._id);
   };
 
+  const handleComplete = () => {
+    handleMenuClose();
+    if (onComplete) {
+      onComplete(list._id);
+    }
+  };
+
   const handleSaveEdit = async () => {
     // Cache-only update - update UI and local storage immediately
     const updatedList = {
@@ -524,6 +545,27 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
                 overflow: "hidden",
               }}
             >
+              {/* Profile picture on the left for lists in homes */}
+              {isInHome && list.creator && (
+                <Avatar
+                  src={list.creator.photo}
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    bgcolor: "rgba(255,255,255,0.2)",
+                    color: getContrastTextColor(list.color || "#1976d2"),
+                    flexShrink: 0,
+                  }}
+                >
+                  {list.creator.photo ? (
+                    ""
+                  ) : (
+                    <PersonIcon sx={{ fontSize: 20 }} />
+                  )}
+                </Avatar>
+              )}
+
+              {/* Title/name input */}
               {editingListName ? (
                 <TextField
                   variant="standard"
@@ -545,8 +587,6 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
                   }}
                   sx={{
                     flex: 1,
-                    width: "100%",
-                    maxWidth: "100%",
                     "& .MuiInputBase-input": {
                       color: getContrastTextColor(list.color || "#1976d2"),
                     },
@@ -573,8 +613,6 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
                     py: 0.5,
                     px: 0.5,
                     borderRadius: 1,
-                    width: "100%",
-                    maxWidth: "100%",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
@@ -585,6 +623,21 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
                   }}
                 >
                   {list.name}
+                </Typography>
+              )}
+
+              {/* Home name on the right */}
+              {isInHome && list.home && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: getContrastTextColor(list.color || "#1976d2"),
+                    fontStyle: "italic",
+                    flexShrink: 0,
+                    opacity: 0.8,
+                  }}
+                >
+                  {list.home.name}
                 </Typography>
               )}
             </Box>
@@ -837,6 +890,29 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
             )}
           </Box>
         </CardContent>
+
+        {/* Floating completion button */}
+        {canComplete && (
+          <Fab
+            size="small"
+            color="primary"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleComplete();
+            }}
+            sx={{
+              position: "absolute",
+              bottom: 16,
+              right: 16,
+              width: 40,
+              height: 40,
+              minHeight: 40,
+              zIndex: 1,
+            }}
+          >
+            <CheckCircleIcon sx={{ fontSize: 22 }} />
+          </Fab>
+        )}
       </StyledCard>
 
       {/* Context Menu */}
@@ -858,6 +934,12 @@ const ShoppingListCard: React.FC<ShoppingListCardProps> = ({
           <ArchiveIcon sx={{ mr: 1 }} />
           {t("archive")}
         </MenuItem>
+        {canComplete && (
+          <MenuItem onClick={handleComplete}>
+            <CheckCircleIcon sx={{ mr: 1 }} />
+            Mark Complete
+          </MenuItem>
+        )}
         <MenuItem onClick={handleDelete} sx={{ color: "error.main" }}>
           <DeleteIcon sx={{ mr: 1 }} />
           {t("delete")}
