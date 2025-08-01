@@ -122,8 +122,11 @@ export class SessionManager {
    */
   static handleExpiredSession(): void {
     console.log("[SessionManager] Session expired, cleaning up");
-    apiClient.clearTokens().catch(error => {
-      console.error("[SessionManager] Error clearing tokens on session expiry:", error);
+    apiClient.clearTokens().catch((error) => {
+      console.error(
+        "[SessionManager] Error clearing tokens on session expiry:",
+        error
+      );
     });
 
     // Notify app about session expiration
