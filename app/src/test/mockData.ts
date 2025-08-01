@@ -34,6 +34,7 @@ export const mockShoppingList: ShoppingList = {
   description: "Test description",
   color: "#2e7d32",
   archived: false,
+  status: "active",
   items: [mockShoppingItem],
   createdAt: 1640995200000,
   updatedAt: 1640995200000,
