@@ -146,6 +146,10 @@ def register_blueprints(app):
     app.register_blueprint(user_bp)
     app.register_blueprint(shopping_bp)
     
+    # Import and register home routes
+    from home_routes import home_bp
+    app.register_blueprint(home_bp)
+    
     # Add explicit OPTIONS handler for all routes to ensure CORS preflight works
     @app.before_request
     def handle_preflight():

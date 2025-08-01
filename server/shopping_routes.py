@@ -37,15 +37,50 @@ def check_shopping_sync_status():
 @shopping_bp.route('/lists', methods=['GET'])
 @auth_required
 def get_shopping_lists():
-    """Get all shopping lists for the current user"""
+    """Get all shopping lists for the current user, with optional home filtering"""
     try:
         user_id = get_jwt_identity()
         include_archived = request.args.get('include_archived', 'false').lower() == 'true'
+        home_id = request.args.get('home_id')  # Optional home filter
         
-        shopping_lists = ShoppingList.find_by_user_id(user_id, include_archived)
+        shopping_lists = ShoppingList.find_by_user_id(user_id, include_archived, home_id)
+        
+        # Enrich lists with creator information for home lists
+        enriched_lists = []
+        for sl in shopping_lists:
+            list_dict = sl.to_dict()
+            
+            # Add creator info if list is in a home and creator is different from current user
+            if list_dict.get('home_id') and list_dict['user_id'] != user_id:
+                from models import User
+                creator = User.find_by_id(list_dict['user_id'])
+                if creator:
+                    list_dict['creator'] = {
+                        'id': creator.id,
+                        'name': creator.data['name'],
+                        'photo': creator.data.get('photo')
+                    }
+            
+            # Add home info if list is in a home
+            if list_dict.get('home_id'):
+                from home_models import Home
+                home = Home.find_by_id(list_dict['home_id'])
+                if home:
+                    list_dict['home'] = {
+                        'id': home.id,
+                        'name': home.data['name']
+                    }
+            
+            # Add permission info
+            list_dict['permissions'] = {
+                'can_edit': sl.can_user_edit(user_id),
+                'can_complete_items': sl.can_user_complete_items(user_id)
+            }
+            
+            enriched_lists.append(list_dict)
         
         return jsonify({
-            'shopping_lists': [sl.to_dict() for sl in shopping_lists]
+            'shopping_lists': enriched_lists
         }), 200
         
     except Exception as e:
@@ -68,12 +103,22 @@ def create_shopping_list():
         color = data.get('color', '#1976d2')  # Default to Material-UI primary blue
         list_id = data.get('_id')  # Accept custom ID from frontend
         items = data.get('items', [])  # Accept items array from frontend
+        home_id = data.get('home_id')  # Optional home assignment
         
         if not name:
             return jsonify({'message': 'Shopping list name is required'}), 400
         
-        current_app.logger.info(f"About to create shopping list: name={name}, desc={description}, color={color}, id={list_id}, items_count={len(items)}")
-        shopping_list = ShoppingList.create(user_id, name, description, color, list_id, items)
+        # Validate home_id if provided
+        if home_id:
+            from home_models import Home
+            home = Home.find_by_id(home_id)
+            if not home:
+                return jsonify({'message': 'Home not found'}), 404
+            if not home.is_member(user_id):
+                return jsonify({'message': 'You are not a member of this home'}), 403
+        
+        current_app.logger.info(f"About to create shopping list: name={name}, desc={description}, color={color}, id={list_id}, items_count={len(items)}, home_id={home_id}")
+        shopping_list = ShoppingList.create(user_id, name, description, color, list_id, items, home_id)
         current_app.logger.info(f"Shopping list created with ID: {shopping_list.id}")
         
         result = jsonify({
@@ -104,8 +149,36 @@ def get_shopping_list(list_id):
         if not shopping_list:
             return jsonify({'message': 'Shopping list not found'}), 404
         
+        # Add permission info and enriched data
+        list_dict = shopping_list.to_dict()
+        list_dict['permissions'] = {
+            'can_edit': shopping_list.can_user_edit(user_id),
+            'can_complete_items': shopping_list.can_user_complete_items(user_id)
+        }
+        
+        # Add creator info if different from current user
+        if list_dict.get('home_id') and list_dict['user_id'] != user_id:
+            from models import User
+            creator = User.find_by_id(list_dict['user_id'])
+            if creator:
+                list_dict['creator'] = {
+                    'id': creator.id,
+                    'name': creator.data['name'],
+                    'photo': creator.data.get('photo')
+                }
+        
+        # Add home info if list is in a home
+        if list_dict.get('home_id'):
+            from home_models import Home
+            home = Home.find_by_id(list_dict['home_id'])
+            if home:
+                list_dict['home'] = {
+                    'id': home.id,
+                    'name': home.data['name']
+                }
+        
         return jsonify({
-            'shopping_list': shopping_list.to_dict()
+            'shopping_list': list_dict
         }), 200
         
     except Exception as e:
@@ -129,6 +202,10 @@ def update_shopping_list(list_id):
         if not shopping_list:
             return jsonify({'message': 'Shopping list not found'}), 404
         
+        # Check if user can edit this list
+        if not shopping_list.can_user_edit(user_id):
+            return jsonify({'message': 'You do not have permission to edit this list'}), 403
+        
         # Validate update data
         update_data = {}
         if 'name' in data:
@@ -145,6 +222,15 @@ def update_shopping_list(list_id):
         
         if 'archived' in data:
             update_data['archived'] = bool(data['archived'])
+            # Also update status field for consistency
+            update_data['status'] = 'archived' if update_data['archived'] else 'active'
+        
+        if 'status' in data:
+            status = data['status']
+            if status in ['active', 'completed', 'archived', 'deleted']:
+                update_data['status'] = status
+                # Update archived field for backward compatibility
+                update_data['archived'] = (status == 'archived')
         
         if 'items' in data:
             update_data['items'] = data['items']  # Accept entire items array
@@ -159,6 +245,42 @@ def update_shopping_list(list_id):
     except Exception as e:
         current_app.logger.error(f"Update shopping list error: {e}")
         return jsonify({'message': 'Failed to update shopping list'}), 500
+
+@shopping_bp.route('/lists/<list_id>/complete', methods=['POST'])
+@auth_required
+def complete_shopping_list(list_id):
+    """Mark a shopping list as completed"""
+    try:
+        user_id = get_jwt_identity()
+        
+        # Accept both MongoDB ObjectIds and custom frontend-generated IDs
+        if not (ObjectId.is_valid(list_id) or '_' in list_id):
+            return jsonify({'message': 'Invalid list ID'}), 400
+        
+        shopping_list = ShoppingList.find_by_id(list_id, user_id)
+        
+        if not shopping_list:
+            return jsonify({'message': 'Shopping list not found'}), 404
+        
+        # Check if user can edit this list (only owners can complete lists)
+        if not shopping_list.can_user_edit(user_id):
+            return jsonify({'message': 'You do not have permission to complete this list'}), 403
+        
+        # Check if list can be completed
+        if not shopping_list.can_be_completed():
+            return jsonify({'message': 'List cannot be completed. Please ensure all items are checked.'}), 400
+        
+        # Set status to completed
+        shopping_list.set_status('completed')
+        
+        return jsonify({
+            'message': 'Shopping list marked as completed',
+            'shopping_list': shopping_list.to_dict()
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Complete shopping list error: {e}")
+        return jsonify({'message': 'Failed to complete shopping list'}), 500
 
 @shopping_bp.route('/lists/<list_id>', methods=['DELETE'])
 @auth_required
@@ -175,6 +297,10 @@ def delete_shopping_list(list_id):
         
         if not shopping_list:
             return jsonify({'message': 'Shopping list not found'}), 404
+        
+        # Check if user can edit this list
+        if not shopping_list.can_user_edit(user_id):
+            return jsonify({'message': 'You do not have permission to delete this list'}), 403
         
         shopping_list.delete()
         

@@ -16,9 +16,9 @@ class ShoppingList:
         return str(self.data['_id'])
     
     @classmethod
-    def create(cls, user_id: str, name: str, description: str = "", color: str = "#1976d2", list_id: str = None, items: List[Dict[str, Any]] = None) -> 'ShoppingList':
+    def create(cls, user_id: str, name: str, description: str = "", color: str = "#1976d2", list_id: str = None, items: List[Dict[str, Any]] = None, home_id: str = None) -> 'ShoppingList':
         """Create a new shopping list with optional custom ID and items"""
-        print(f"[ShoppingList.create] Creating list for user {user_id}: {name}, custom_id={list_id}, items_count={len(items) if items else 0}")
+        print(f"[ShoppingList.create] Creating list for user {user_id}: {name}, custom_id={list_id}, items_count={len(items) if items else 0}, home_id={home_id}")
         
         list_data = {
             'user_id': ObjectId(user_id),
@@ -26,6 +26,8 @@ class ShoppingList:
             'description': description,
             'color': color,  # Default to Material-UI primary blue
             'archived': False,
+            'status': 'active',  # New status field: active, completed, archived, deleted
+            'home_id': ObjectId(home_id) if home_id else None,  # Optional home association
             'items': items or [],  # Use provided items or empty list
             'createdAt': get_unix_timestamp(),
             'updatedAt': get_unix_timestamp()
@@ -52,20 +54,40 @@ class ShoppingList:
         return cls(list_data)
     
     @classmethod
-    def find_by_user_id(cls, user_id: str, include_archived: bool = False) -> List['ShoppingList']:
-        """Find all shopping lists for a user"""
+    def find_by_user_id(cls, user_id: str, include_archived: bool = False, home_id: str = None) -> List['ShoppingList']:
+        """Find all shopping lists for a user, including home lists they have access to"""
         shopping_lists_collection = db.get_collection('shopping_lists')
         
-        query = {'user_id': ObjectId(user_id)}
-        if not include_archived:
-            query['archived'] = {'$ne': True}
+        if home_id:
+            # Find lists for a specific home
+            query = {
+                'home_id': ObjectId(home_id) if home_id != 'personal' else None,
+                'status': {'$ne': 'deleted'}
+            }
+            if not include_archived:
+                query['status'] = 'active'
+        else:
+            # Find user's personal lists + all home lists they have access to
+            from home_models import Home
+            user_homes = Home.find_by_user_id(user_id)
+            home_ids = [ObjectId(home.id) for home in user_homes]
+            
+            query = {
+                '$or': [
+                    {'user_id': ObjectId(user_id)},  # Personal lists
+                    {'home_id': {'$in': home_ids}}   # Home lists
+                ],
+                'status': {'$ne': 'deleted'}
+            }
+            if not include_archived:
+                query['status'] = 'active'
         
         lists_data = list(shopping_lists_collection.find(query).sort('createdAt', 1))
         return [cls(list_data) for list_data in lists_data]
     
     @classmethod
-    def find_by_id(cls, list_id: str, user_id: str) -> Optional['ShoppingList']:
-        """Find shopping list by ID and user ID"""
+    def find_by_id(cls, list_id: str, user_id: str = None) -> Optional['ShoppingList']:
+        """Find shopping list by ID with optional user permission check"""
         shopping_lists_collection = db.get_collection('shopping_lists')
         
         # Handle both MongoDB ObjectIds and custom frontend-generated IDs
@@ -76,10 +98,20 @@ class ShoppingList:
             # Custom frontend-generated ID (string)
             query_id = list_id
         
-        list_data = shopping_lists_collection.find_one({
-            '_id': query_id,
-            'user_id': ObjectId(user_id)
-        })
+        query = {'_id': query_id}
+        
+        # If user_id provided, check permissions
+        if user_id:
+            from home_models import Home
+            user_homes = Home.find_by_user_id(user_id)
+            home_ids = [ObjectId(home.id) for home in user_homes]
+            
+            query['$or'] = [
+                {'user_id': ObjectId(user_id)},  # User owns the list
+                {'home_id': {'$in': home_ids}}   # User has access through home
+            ]
+        
+        list_data = shopping_lists_collection.find_one(query)
         return cls(list_data) if list_data else None
     
     def update(self, update_data: Dict[str, Any]) -> None:
@@ -173,17 +205,86 @@ class ShoppingList:
         return True
     
     def archive(self) -> None:
-        """Archive the shopping list"""
-        self.update({'archived': True})
+        """Archive the shopping list (deprecated - use set_status)"""
+        self.update({'archived': True, 'status': 'archived'})
     
     def unarchive(self) -> None:
-        """Unarchive the shopping list"""
-        self.update({'archived': False})
+        """Unarchive the shopping list (deprecated - use set_status)"""
+        self.update({'archived': False, 'status': 'active'})
+    
+    def set_status(self, status: str) -> None:
+        """Set the status of the shopping list"""
+        valid_statuses = ['active', 'completed', 'archived', 'deleted']
+        if status not in valid_statuses:
+            raise ValueError(f"Invalid status: {status}. Must be one of {valid_statuses}")
+        
+        update_data = {'status': status}
+        # Keep archived field for backward compatibility
+        if status == 'archived':
+            update_data['archived'] = True
+        else:
+            update_data['archived'] = False
+            
+        self.update(update_data)
     
     def delete(self) -> None:
-        """Delete the shopping list"""
+        """Soft delete the shopping list by setting status to deleted"""
+        self.set_status('deleted')
+    
+    def hard_delete(self) -> None:
+        """Permanently delete the shopping list from database"""
         shopping_lists_collection = db.get_collection('shopping_lists')
         shopping_lists_collection.delete_one({'_id': self.data['_id']})
+    
+    def is_owned_by(self, user_id: str) -> bool:
+        """Check if the list is owned by the specified user"""
+        return str(self.data['user_id']) == user_id
+    
+    def is_in_home(self) -> bool:
+        """Check if the list belongs to a home"""
+        return self.data.get('home_id') is not None
+    
+    def can_user_edit(self, user_id: str) -> bool:
+        """Check if user can edit this list (owners can edit metadata, home members can edit items)"""
+        if self.is_owned_by(user_id):
+            return True
+        
+        # For home lists, members can edit items but not list metadata
+        if self.is_in_home():
+            from home_models import Home
+            home = Home.find_by_id(str(self.data['home_id']))
+            return home and home.is_member(user_id)
+        
+        return False
+    
+    def can_user_complete_items(self, user_id: str) -> bool:
+        """Check if user can mark items as completed (owners and home members)"""
+        if self.is_owned_by(user_id):
+            return True
+        
+        if self.is_in_home():
+            from home_models import Home
+            home = Home.find_by_id(str(self.data['home_id']))
+            return home and home.is_member(user_id)
+        
+        return False
+    
+    def can_be_completed(self) -> bool:
+        """Check if the list can be marked as completed (all items are checked)"""
+        items = self.data.get('items', [])
+        if not items:
+            return False  # Empty lists can't be completed
+        
+        return all(item.get('completed', False) for item in items)
+    
+    def get_completion_percentage(self) -> float:
+        """Get the completion percentage of the list"""
+        items = self.data.get('items', [])
+        if not items:
+            return 0.0
+        
+        completed_items = sum(1 for item in items if item.get('completed', False))
+        return (completed_items / len(items)) * 100
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
@@ -191,7 +292,17 @@ class ShoppingList:
         result['_id'] = str(result['_id'])
         result['user_id'] = str(result['user_id'])
         
-        # Timestamps are already Unix integers, no conversion needed
+        # Convert home_id to string if present
+        if result.get('home_id'):
+            result['home_id'] = str(result['home_id'])
+        
+        # Add computed fields
+        result['can_be_completed'] = self.can_be_completed()
+        result['completion_percentage'] = self.get_completion_percentage()
+        
+        # Ensure status field exists (for backward compatibility)
+        if 'status' not in result:
+            result['status'] = 'archived' if result.get('archived', False) else 'active'
         
         return result
 
