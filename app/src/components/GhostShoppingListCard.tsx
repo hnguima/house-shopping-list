@@ -1,8 +1,21 @@
 import React, { useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent, TextField, Box, useTheme } from "@mui/material";
+import {
+  Card,
+  CardContent,
+  TextField,
+  Box,
+  useTheme,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Typography,
+} from "@mui/material";
 import { styled } from "@mui/system";
 import AddIcon from "@mui/icons-material/Add";
+import { useHomes } from "../hooks/useHomes";
+import type { Home } from "../types/home";
 
 const StyledGhostCard = styled(Card)(({ theme }: any) => ({
   marginBottom: theme.spacing(2),
@@ -16,7 +29,7 @@ const StyledGhostCard = styled(Card)(({ theme }: any) => ({
 }));
 
 interface GhostShoppingListCardProps {
-  onCreate: (name: string) => Promise<void>;
+  onCreate: (name: string, homeId?: string) => Promise<void>;
 }
 
 const GhostShoppingListCard: React.FC<GhostShoppingListCardProps> = ({
@@ -24,7 +37,9 @@ const GhostShoppingListCard: React.FC<GhostShoppingListCardProps> = ({
 }) => {
   const { t } = useTranslation();
   const theme = useTheme();
+  const { homes } = useHomes();
   const [newListName, setNewListName] = useState("");
+  const [selectedHomeId, setSelectedHomeId] = useState<string>("personal");
   const [isCreating, setIsCreating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -33,8 +48,10 @@ const GhostShoppingListCard: React.FC<GhostShoppingListCardProps> = ({
 
     try {
       setIsCreating(true);
-      await onCreate(newListName.trim());
+      const homeId = selectedHomeId === "personal" ? undefined : selectedHomeId;
+      await onCreate(newListName.trim(), homeId);
       setNewListName("");
+      setSelectedHomeId("personal");
     } catch (error) {
       console.error("Error creating list:", error);
     } finally {
@@ -106,6 +123,31 @@ const GhostShoppingListCard: React.FC<GhostShoppingListCardProps> = ({
               },
             }}
           />
+
+          <FormControl variant="standard" sx={{ minWidth: 85 }}>
+            <Select
+              value={selectedHomeId}
+              onChange={(e) => setSelectedHomeId(e.target.value)}
+              disabled={isCreating}
+              sx={{
+                fontSize: "0.6rem",
+                "& .MuiSelect-select": {
+                  paddingTop: "8px",
+                },
+              }}
+            >
+              <MenuItem value="personal">
+                <Typography variant="body2">
+                  {t("personalList", "No Home")}
+                </Typography>
+              </MenuItem>
+              {homes.map((home) => (
+                <MenuItem key={home._id} value={home._id}>
+                  <Typography variant="body2">{home.name}</Typography>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
         </Box>
       </CardContent>
     </StyledGhostCard>

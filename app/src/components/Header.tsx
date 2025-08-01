@@ -10,12 +10,15 @@ import { styled } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import PersonIcon from "@mui/icons-material/Person";
 import type { User } from "../types/user";
+import HomeSelector from "./HomeSelector";
 
 interface HeaderProps {
   title?: string;
   screen: "dashboard" | "profile";
   setScreen: (screen: "dashboard" | "profile") => void;
   user?: User | null;
+  selectedHomeId?: string[];
+  onHomeChange?: (selectedHomes: string[]) => void;
 }
 
 const Header: React.FC<HeaderProps> = ({
@@ -23,7 +26,17 @@ const Header: React.FC<HeaderProps> = ({
   screen,
   setScreen,
   user,
+  selectedHomeId,
+  onHomeChange,
 }) => {
+  // Debug logging for user photo
+  console.log("[Header] User data:", {
+    hasUser: !!user,
+    userName: user?.name,
+    hasPhoto: !!user?.photo,
+    photoLength: user?.photo?.length,
+    photoPreview: user?.photo?.substring(0, 50) + "...",
+  });
   // Styled components
   const StyledAppBar = styled(AppBar)({
     zIndex: 1201,
@@ -74,6 +87,17 @@ const Header: React.FC<HeaderProps> = ({
             >
               <ArrowBackIcon />
             </IconButton>
+          )}
+
+          {/* Home selector on the left side, visible on all screen sizes */}
+          {screen === "dashboard" && (
+            <Box sx={{ mr: 2 }}>
+              <HomeSelector
+                value={selectedHomeId}
+                onChange={onHomeChange}
+                variant="compact"
+              />
+            </Box>
           )}
         </Box>
         <StyledTitle variant="h5" sx={{ flexGrow: 1, textAlign: "center" }}>
