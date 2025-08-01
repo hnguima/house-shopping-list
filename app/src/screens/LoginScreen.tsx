@@ -106,7 +106,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onError }) => {
       }
 
       // Store JWT tokens using new session management
-      const loginSuccess = await SessionManager.handleLoginResponse(response.data);
+      const loginSuccess = await SessionManager.handleLoginResponse(
+        response.data
+      );
       if (!loginSuccess) {
         throw new Error("Failed to store authentication tokens");
       }
