@@ -40,8 +40,10 @@ export class ShoppingCacheManager {
     try {
       // Get shopping list timestamps from server (lightweight call)
       const timestampsResponse = await apiClient.getShoppingListsTimestamps(
-        true
-      ); // Include archived
+        false, // Don't include archived by default
+        undefined, // No specific home filter
+        "active" // Only get active lists by default
+      );
 
       if (!timestampsResponse?.data?.lists) {
         console.warn(
@@ -128,7 +130,11 @@ export class ShoppingCacheManager {
         console.log("[ShoppingCache] Fetching fresh shopping data from API");
 
         // Fetch fresh data from API
-        const response = await apiClient.getShoppingLists(true);
+        const response = await apiClient.getShoppingLists(
+          false, // Don't include archived by default
+          undefined, // No specific home filter
+          "active" // Only get active lists by default
+        );
 
         if (response?.data?.shopping_lists) {
           const lists = response.data.shopping_lists;
@@ -193,6 +199,7 @@ export class ShoppingCacheManager {
 
   /**
    * Get all shopping lists (with smart caching to avoid frequent server calls)
+   * Filters out completed, archived, and deleted lists by default - only shows active lists
    */
   static async getShoppingLists(): Promise<ShoppingList[]> {
     try {
@@ -208,19 +215,25 @@ export class ShoppingCacheManager {
         console.log(
           "[ShoppingCache] Using cached data (server check not needed yet)"
         );
-        return (shoppingData as CachedShoppingData).lists || [];
+        const allLists = (shoppingData as CachedShoppingData).lists || [];
+        // Filter to only show active lists (exclude completed, archived, deleted)
+        return allLists.filter((list) => list.status === "active");
       }
 
       // If no cached data or it's time to check server, do full cache check
       console.log("[ShoppingCache] Time to check server or no cached data");
       this.lastServerCheck = now;
       const data = await this.getShoppingDataWithCache();
-      return data?.lists || [];
+      const allLists = data?.lists || [];
+      // Filter to only show active lists (exclude completed, archived, deleted)
+      return allLists.filter((list) => list.status === "active");
     } catch (error) {
       console.error("[ShoppingCache] Error in getShoppingLists:", error);
       // Fallback to cached data if available
       const { shoppingData } = await getShoppingData();
-      return (shoppingData as CachedShoppingData)?.lists || [];
+      const allLists = (shoppingData as CachedShoppingData)?.lists || [];
+      // Filter to only show active lists (exclude completed, archived, deleted)
+      return allLists.filter((list) => list.status === "active");
     }
   }
 
@@ -243,6 +256,41 @@ export class ShoppingCacheManager {
   }
 
   /**
+   * Get archived shopping lists
+   */
+  static async getArchivedShoppingLists(): Promise<ShoppingList[]> {
+    const data = await this.getCachedShoppingData();
+    const allLists = data?.lists || [];
+    return allLists.filter((list) => list.status === "archived");
+  }
+
+  /**
+   * Get completed shopping lists
+   */
+  static async getCompletedShoppingLists(): Promise<ShoppingList[]> {
+    const data = await this.getCachedShoppingData();
+    const allLists = data?.lists || [];
+    return allLists.filter((list) => list.status === "completed");
+  }
+
+  /**
+   * Get deleted shopping lists
+   */
+  static async getDeletedShoppingLists(): Promise<ShoppingList[]> {
+    const data = await this.getCachedShoppingData();
+    const allLists = data?.lists || [];
+    return allLists.filter((list) => list.status === "deleted");
+  }
+
+  /**
+   * Get all shopping lists regardless of status (for admin/management purposes)
+   */
+  static async getAllShoppingLists(): Promise<ShoppingList[]> {
+    const data = await this.getCachedShoppingData();
+    return data?.lists || [];
+  }
+
+  /**
    * Get only cached data without server check (for immediate UI updates)
    */
   static async getCachedShoppingData(): Promise<CachedShoppingData | null> {
@@ -260,10 +308,13 @@ export class ShoppingCacheManager {
 
   /**
    * Get cached shopping lists (no server check)
+   * Filters to only show active lists by default
    */
   static async getCachedShoppingLists(): Promise<ShoppingList[]> {
     const data = await this.getCachedShoppingData();
-    return data?.lists || [];
+    const allLists = data?.lists || [];
+    // Filter to only show active lists (exclude completed, archived, deleted)
+    return allLists.filter((list) => list.status === "active");
   }
 
   /**
@@ -333,34 +384,20 @@ export class ShoppingCacheManager {
   }
 
   /**
-   * Remove a shopping list from cache and delete from server asynchronously
+   * Mark a shopping list as deleted (soft delete)
    */
-  static async removeShoppingListFromCache(listId: string): Promise<void> {
+  static async markShoppingListAsDeleted(listId: string): Promise<void> {
     const currentData = await this.getCachedShoppingData();
     const lists = currentData?.lists || [];
 
-    const updatedLists = lists.filter((list) => list._id !== listId);
+    const updatedLists = lists.map((list) =>
+      list._id === listId
+        ? { ...list, status: "deleted" as const, updatedAt: Date.now() }
+        : list
+    );
     await this.updateCachedShoppingLists(updatedLists);
 
-    console.log(`[ShoppingCache] Removed list ${listId} from cache`);
-
-    // Delete from server asynchronously (don't await to avoid delaying UI)
-    apiClient.deleteShoppingList(listId).catch((error) => {
-      // Handle 404 gracefully - list might already be deleted or not exist
-      if (
-        error.message?.includes("not found") ||
-        error.message?.includes("404")
-      ) {
-        console.log(
-          `[ShoppingCache] List ${listId} already deleted from server or doesn't exist`
-        );
-      } else {
-        console.error(
-          `[ShoppingCache] Failed to delete list ${listId} from server:`,
-          error
-        );
-      }
-    });
+    console.log(`[ShoppingCache] Marked list ${listId} as deleted in cache`);
   }
 
   /**
@@ -378,8 +415,12 @@ export class ShoppingCacheManager {
         return;
       }
 
-      // Get server list timestamps to compare (lightweight call)
-      const serverTimestamps = await apiClient.getShoppingListsTimestamps(true);
+      // Get server list timestamps to compare (lightweight call) - get all statuses for comparison
+      const serverTimestamps = await apiClient.getShoppingListsTimestamps(
+        true, // Include all
+        undefined, // No home filter
+        "all" // Get all statuses for comparison
+      );
       if (!serverTimestamps?.data?.lists) {
         console.warn(
           "[ShoppingCache] Cannot get server list timestamps for comparison"
@@ -421,13 +462,54 @@ export class ShoppingCacheManager {
               name: cachedList.name,
               description: cachedList.description,
               color: cachedList.color, // Include color for future support
+              status: cachedList.status, // Include status field
+              home_id: cachedList.home_id, // Include home assignment
               items: itemsWithUnixTimestamps, // Include items with Unix timestamps
             });
           } catch (error) {
-            console.error(
-              `[ShoppingCache] Failed to create list ${cachedList.name}:`,
-              error
-            );
+            // If we get a duplicate key error, it means the list exists on server but not in our timestamp comparison
+            // This can happen with deleted lists - try to update instead
+            if (
+              error instanceof Error &&
+              error.message.includes("duplicate key")
+            ) {
+              console.log(
+                `[ShoppingCache] List ${cachedList._id} already exists on server, updating instead`
+              );
+              try {
+                const itemsWithUnixTimestamps =
+                  cachedList.items?.map((item) => ({
+                    ...item,
+                    createdAt:
+                      typeof item.createdAt === "string"
+                        ? new Date(item.createdAt).getTime()
+                        : item.createdAt,
+                    updatedAt:
+                      typeof item.updatedAt === "string"
+                        ? new Date(item.updatedAt).getTime()
+                        : item.updatedAt,
+                  })) || [];
+
+                await apiClient.updateShoppingList(cachedList._id, {
+                  name: cachedList.name,
+                  description: cachedList.description,
+                  archived: cachedList.archived,
+                  status: cachedList.status, // Include status field
+                  home_id: cachedList.home_id, // Include home assignment
+                  items: itemsWithUnixTimestamps, // Send items with Unix timestamps
+                });
+              } catch (updateError) {
+                console.error(
+                  `[ShoppingCache] Failed to update existing list ${cachedList.name}:`,
+                  updateError
+                );
+              }
+            } else {
+              console.error(
+                `[ShoppingCache] Failed to create list ${cachedList.name}:`,
+                error
+              );
+            }
           }
           continue;
         }
@@ -460,6 +542,8 @@ export class ShoppingCacheManager {
               name: cachedList.name,
               description: cachedList.description,
               archived: cachedList.archived,
+              status: cachedList.status, // Include status field
+              home_id: cachedList.home_id, // Include home assignment
               items: itemsWithUnixTimestamps, // Send items with Unix timestamps
             });
           } catch (error) {
@@ -505,6 +589,7 @@ export class ShoppingCacheManager {
               name: list.name,
               description: list.description,
               archived: list.archived,
+              home_id: list.home_id, // Include home assignment
               items: itemsWithUnixTimestamps,
             });
           } catch (error) {
