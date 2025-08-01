@@ -16,9 +16,32 @@ export interface ShoppingList {
   description: string;
   color: string;
   archived: boolean;
+  status: "active" | "completed" | "archived" | "deleted";
+  home_id?: string;
   items: ShoppingItem[];
   createdAt: number; // Unix timestamp in milliseconds
   updatedAt: number; // Unix timestamp in milliseconds
+
+  // Computed fields (added by backend)
+  can_be_completed?: boolean;
+  completion_percentage?: number;
+
+  // Permission fields (added by backend)
+  permissions?: {
+    can_edit: boolean;
+    can_complete_items: boolean;
+  };
+
+  // Enriched fields (added by backend)
+  creator?: {
+    id: string;
+    name: string;
+    photo?: string;
+  };
+  home?: {
+    id: string;
+    name: string;
+  };
 }
 
 export interface ShoppingListStats {
@@ -34,6 +57,7 @@ export interface CreateShoppingListData {
   name: string;
   description?: string;
   color?: string;
+  home_id?: string;
 }
 
 export interface UpdateShoppingListData {
@@ -41,6 +65,8 @@ export interface UpdateShoppingListData {
   description?: string;
   color?: string;
   archived?: boolean;
+  status?: "active" | "completed" | "archived" | "deleted";
+  home_id?: string;
 }
 
 export interface CreateShoppingItemData {

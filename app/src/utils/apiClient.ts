@@ -119,7 +119,7 @@ class ApiClient {
     try {
       await Promise.all([
         Preferences.set({ key: ACCESS_TOKEN_KEY, value: accessToken }),
-        Preferences.set({ key: REFRESH_TOKEN_KEY, value: refreshToken })
+        Preferences.set({ key: REFRESH_TOKEN_KEY, value: refreshToken }),
       ]);
     } catch (error) {
       console.error("[ApiClient] Error setting tokens:", error);
@@ -144,7 +144,7 @@ class ApiClient {
     try {
       await Promise.all([
         Preferences.remove({ key: ACCESS_TOKEN_KEY }),
-        Preferences.remove({ key: REFRESH_TOKEN_KEY })
+        Preferences.remove({ key: REFRESH_TOKEN_KEY }),
       ]);
     } catch (error) {
       console.error("[ApiClient] Error clearing tokens:", error);
@@ -162,7 +162,7 @@ class ApiClient {
    * Backward compatibility - clear all tokens
    */
   clearToken(): void {
-    this.clearTokens().catch(error => {
+    this.clearTokens().catch((error) => {
       console.error("[ApiClient] Error clearing tokens:", error);
     });
   }
@@ -268,8 +268,11 @@ class ApiClient {
 
     if (isAuthError) {
       console.warn("[ApiClient] Authentication error detected:", errorMessage);
-      this.clearTokens().catch(error => {
-        console.error("[ApiClient] Error clearing tokens on auth error:", error);
+      this.clearTokens().catch((error) => {
+        console.error(
+          "[ApiClient] Error clearing tokens on auth error:",
+          error
+        );
       });
       if (this.onTokenExpired) {
         // Use setTimeout to avoid blocking the current execution
@@ -441,10 +444,21 @@ class ApiClient {
     return this.get("/api/user/sync-check");
   }
 
-  async getShoppingListsTimestamps(includeArchived = false) {
-    includeArchived = false;
-    const params = includeArchived ? "?include_archived=true" : "";
-    return this.get(`/api/shopping/sync-check${params}`);
+  async getShoppingListsTimestamps(
+    includeArchived = false,
+    homeId?: string,
+    status?: "active" | "completed" | "archived" | "deleted" | "all"
+  ) {
+    const params = new URLSearchParams();
+    if (includeArchived) params.append("include_archived", "true");
+    if (homeId) params.append("home_id", homeId);
+    if (status && status !== "all") params.append("status", status);
+    else if (!includeArchived && !status) params.append("status", "active"); // Default to active only
+    const queryString = params.toString();
+    const endpoint = queryString
+      ? `/api/shopping/sync-check?${queryString}`
+      : "/api/shopping/sync-check";
+    return this.get(endpoint);
   }
 
   async getShoppingListTimestamp(listId: string) {
@@ -482,7 +496,7 @@ class ApiClient {
     try {
       const [accessToken, refreshToken] = await Promise.all([
         this.getAccessToken(),
-        this.getRefreshToken()
+        this.getRefreshToken(),
       ]);
       return !!accessToken && !!refreshToken;
     } catch (error) {
@@ -511,9 +525,21 @@ class ApiClient {
   }
 
   // Shopping Lists API
-  async getShoppingLists(includeArchived = false) {
-    const params = includeArchived ? "?include_archived=true" : "";
-    return this.get(`/api/shopping/lists${params}`);
+  async getShoppingLists(
+    includeArchived = false,
+    homeId?: string,
+    status?: "active" | "completed" | "archived" | "deleted" | "all"
+  ) {
+    const params = new URLSearchParams();
+    if (includeArchived) params.append("include_archived", "true");
+    if (homeId) params.append("home_id", homeId);
+    if (status && status !== "all") params.append("status", status);
+    else if (!includeArchived && !status) params.append("status", "active"); // Default to active only
+    const queryString = params.toString();
+    const endpoint = queryString
+      ? `/api/shopping/lists?${queryString}`
+      : "/api/shopping/lists";
+    return this.get(endpoint);
   }
 
   async createShoppingList(data: {
@@ -521,7 +547,9 @@ class ApiClient {
     name: string;
     description?: string;
     color?: string;
+    status?: "active" | "completed" | "archived" | "deleted";
     items?: any[]; // Accept items array
+    home_id?: string; // Optional home assignment
   }) {
     return this.post("/api/shopping/lists", data);
   }
@@ -536,10 +564,16 @@ class ApiClient {
       name?: string;
       description?: string;
       archived?: boolean;
+      status?: "active" | "completed" | "archived" | "deleted";
       items?: any[]; // Accept items array
+      home_id?: string;
     }
   ) {
     return this.put(`/api/shopping/lists/${listId}`, data);
+  }
+
+  async completeShoppingList(listId: string) {
+    return this.post(`/api/shopping/lists/${listId}/complete`);
   }
 
   async deleteShoppingList(listId: string) {
@@ -583,6 +617,74 @@ class ApiClient {
   // Statistics API
   async getShoppingStats() {
     return this.get("/api/shopping/stats");
+  }
+
+  // Homes API
+  async getHomes() {
+    return this.get("/api/homes");
+  }
+
+  async createHome(data: { name: string; description?: string }) {
+    return this.post("/api/homes", data);
+  }
+
+  async getHome(homeId: string) {
+    return this.get(`/api/homes/${homeId}`);
+  }
+
+  async updateHome(
+    homeId: string,
+    data: { name?: string; description?: string }
+  ) {
+    return this.put(`/api/homes/${homeId}`, data);
+  }
+
+  async deleteHome(homeId: string) {
+    return this.delete(`/api/homes/${homeId}`);
+  }
+
+  async leaveHome(homeId: string) {
+    return this.post(`/api/homes/${homeId}/leave`);
+  }
+
+  async inviteUserToHome(
+    homeId: string,
+    data: { email: string; message?: string }
+  ) {
+    return this.post(`/api/homes/${homeId}/invite`, data);
+  }
+
+  async requestJoinHome(homeId: string, data: { message?: string }) {
+    return this.post(`/api/homes/${homeId}/request-join`, data);
+  }
+
+  async getHomeMembers(homeId: string) {
+    return this.get(`/api/homes/${homeId}/members`);
+  }
+
+  async removeMemberFromHome(homeId: string, memberId: string) {
+    return this.delete(`/api/homes/${homeId}/members/${memberId}`);
+  }
+
+  // Home Invitations API
+  async getInvitations() {
+    return this.get("/api/homes/invitations");
+  }
+
+  async respondToInvitation(invitationId: string, action: "accept" | "reject") {
+    return this.put(`/api/homes/invitations/${invitationId}/respond`, {
+      action,
+    });
+  }
+
+  async respondToJoinRequest(requestId: string, action: "accept" | "reject") {
+    return this.put(`/api/homes/requests/${requestId}/respond`, {
+      action,
+    });
+  }
+
+  async getPendingRequests() {
+    return this.get("/api/homes/pending-requests");
   }
 
   // Health check
