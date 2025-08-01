@@ -19,6 +19,7 @@ import { useTranslation } from "react-i18next";
 import apiClient from "./utils/apiClient";
 import { UserCacheManager } from "./utils/cache/userCacheManager";
 import { ShoppingCacheManager } from "./utils/cache/shoppingCacheManager";
+import { HomeCacheManager } from "./utils/cache/homeCacheManager";
 import { BackgroundSync } from "./utils/cache/backgroundSync";
 import { getThemeMode, getLanguage } from "./utils/cache/preferences";
 
@@ -48,10 +49,10 @@ const AppLoadingScreen = () => (
     justifyContent="center"
     alignItems="center"
     minHeight="100vh"
-    sx={{ 
+    sx={{
       backgroundColor: "#ffffff",
       padding: 4,
-      textAlign: "center"
+      textAlign: "center",
     }}
   >
     <Box sx={{ mb: 3 }}>
@@ -69,7 +70,7 @@ const AppLoadingScreen = () => (
           color: "white",
           fontWeight: "bold",
           mb: 2,
-          mx: "auto"
+          mx: "auto",
         }}
       >
         🛒
@@ -79,7 +80,7 @@ const AppLoadingScreen = () => (
           fontSize: "1.5rem",
           fontWeight: "bold",
           color: "#1976d2",
-          mb: 1
+          mb: 1,
         }}
       >
         Shopping List
@@ -88,7 +89,7 @@ const AppLoadingScreen = () => (
         sx={{
           fontSize: "0.9rem",
           color: "#666",
-          mb: 4
+          mb: 4,
         }}
       >
         Loading your data...
@@ -101,6 +102,7 @@ const AppLoadingScreen = () => (
 function App() {
   const { t } = useTranslation();
   const [screen, setScreen] = useState<"dashboard" | "profile">("dashboard");
+  const [selectedHomeId, setSelectedHomeId] = useState<string[]>(["all"]);
 
   // Enhanced screen setter with upload triggering for batching system
   const handleScreenChange = useCallback(
@@ -112,6 +114,7 @@ function App() {
       Promise.allSettled([
         UserCacheManager.uploadPendingChanges(),
         ShoppingCacheManager.uploadPendingChanges(),
+        HomeCacheManager.uploadPendingChanges(),
       ]).catch((error) => {
         console.error(
           "[App] Error uploading pending changes on screen change:",
@@ -121,6 +124,12 @@ function App() {
     },
     [screen]
   );
+
+  // Home filter handler
+  const handleHomeChange = useCallback((selectedHomes: string[]) => {
+    console.log("[App] Home filter changed to:", selectedHomes);
+    setSelectedHomeId(selectedHomes);
+  }, []);
 
   // App state
   const [user, setUser] = useState<User | null>(null);
@@ -179,7 +188,7 @@ function App() {
 
         // First check if we have valid tokens to avoid login flash
         const hasTokens = await apiClient.hasValidSession();
-        
+
         // Load user data
         const userData = await UserCacheManager.getUserDataWithCache();
         if (!mounted) return;
@@ -217,8 +226,24 @@ function App() {
         // Trigger background sync only if user is logged in
         if (mounted && hasTokens) {
           BackgroundSync.syncOnNavigation();
+
+          // Force refresh homes and invitations data immediately
+          console.log("[App] Force refreshing homes and invitations...");
+          HomeCacheManager.forceRefreshAll()
+            .then((data) => {
+              console.log("[App] Force refresh completed:", {
+                homes: data.homes.length,
+                invitations: data.invitations.length,
+              });
+            })
+            .catch((error) => {
+              console.error(
+                "[App] Error force refreshing homes/invitations:",
+                error
+              );
+            });
         }
-        
+
         // Initialization complete
         setIsInitializing(false);
       } catch (error) {
@@ -274,6 +299,7 @@ function App() {
           await Promise.allSettled([
             UserCacheManager.uploadPendingChanges(),
             ShoppingCacheManager.uploadPendingChanges(),
+            HomeCacheManager.uploadPendingChanges(),
           ]);
         } catch (error) {
           console.error("[App] Error uploading on app close:", error);
@@ -334,7 +360,8 @@ function App() {
   };
 
   const renderScreen = () => {
-    if (screen === "dashboard") return <ShoppingListScreen user={user} />;
+    if (screen === "dashboard")
+      return <ShoppingListScreen user={user} selectedHomeId={selectedHomeId} />;
     return (
       <UserProfileScreen
         themeMode={themeMode}
@@ -355,6 +382,8 @@ function App() {
         screen={screen}
         setScreen={handleScreenChange}
         user={user}
+        selectedHomeId={selectedHomeId}
+        onHomeChange={handleHomeChange}
       />
       <Container
         className="App"

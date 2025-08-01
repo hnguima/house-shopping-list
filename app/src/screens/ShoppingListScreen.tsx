@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Box, CircularProgress } from "@mui/material";
 import { styled } from "@mui/system";
 import { getRandomColor } from "../utils/colorUtils";
 import { ShoppingCacheManager, BackgroundSync } from "../utils/cache";
+import { HomeCacheManager } from "../utils/cache/homeCacheManager";
 import {
   useKeyboardAwareness,
   getKeyboardAwareStyles,
@@ -16,6 +17,7 @@ import type { User } from "../types/user";
 
 interface ShoppingListScreenProps {
   user: User | null;
+  selectedHomeId?: string[];
 }
 
 const Container = styled(Box)(({ theme }) => ({
@@ -25,7 +27,10 @@ const Container = styled(Box)(({ theme }) => ({
   minHeight: "calc(100vh - 140px)",
 }));
 
-const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
+const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({
+  user,
+  selectedHomeId,
+}) => {
   const [lists, setLists] = useState<ShoppingList[]>([]);
   const [loading, setLoading] = useState(false); // Start with false, only show if no cached data
   const [snackbar, setSnackbar] = useState({
@@ -33,6 +38,38 @@ const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
     message: "",
     severity: "success" as "success" | "error" | "warning" | "info",
   });
+
+  // Filter lists based on selected homes
+  const filteredLists = useMemo(() => {
+    console.log("[ShoppingListScreen] Filtering lists:", {
+      totalLists: lists.length,
+      selectedHomeId,
+      listsWithHomes: lists.filter((l) => l.home_id).length,
+      personalLists: lists.filter((l) => !l.home_id).length,
+    });
+
+    if (!selectedHomeId || selectedHomeId.includes("all")) {
+      console.log("[ShoppingListScreen] Showing all lists:", lists.length);
+      return lists; // Show all lists
+    }
+
+    const filtered = lists.filter((list) => {
+      // Check if "personal" is selected and this is a personal list
+      if (selectedHomeId.includes("personal") && !list.home_id) {
+        return true;
+      }
+
+      // Check if the list's home is in the selected homes
+      if (list.home_id && selectedHomeId.includes(list.home_id)) {
+        return true;
+      }
+
+      return false;
+    });
+
+    console.log("[ShoppingListScreen] Filtered to:", filtered.length, "lists");
+    return filtered;
+  }, [lists, selectedHomeId]);
 
   // Use the new caching system
   // Add keyboard awareness for mobile
@@ -47,8 +84,16 @@ const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
   // Load shopping lists from new cache system - optimized for seamless UX
   const loadShoppingListsFromCache = async () => {
     try {
+      console.log("[ShoppingListScreen] Starting to load shopping lists...");
+
       // First try to get cached data immediately (no loading state)
       const cachedLists = await ShoppingCacheManager.getCachedShoppingLists();
+      console.log(
+        "[ShoppingListScreen] Got cached lists:",
+        cachedLists.length,
+        cachedLists
+      );
+
       if (cachedLists.length > 0) {
         setLists(cachedLists);
         setLoading(false); // Stop loading since we have data
@@ -59,10 +104,18 @@ const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
 
       // Then get fresh data in background (may update the UI seamlessly)
       const shoppingLists = await ShoppingCacheManager.getShoppingLists();
+      console.log(
+        "[ShoppingListScreen] Got fresh lists from server:",
+        shoppingLists.length,
+        shoppingLists
+      );
 
       // Only update if data actually changed to prevent unnecessary re-renders
       if (JSON.stringify(shoppingLists) !== JSON.stringify(cachedLists)) {
+        console.log("[ShoppingListScreen] Lists changed, updating state");
         setLists(shoppingLists);
+      } else {
+        console.log("[ShoppingListScreen] Lists unchanged");
       }
       setLoading(false);
 
@@ -86,7 +139,7 @@ const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
   );
 
   const handleCreateList = useCallback(
-    async (name: string) => {
+    async (name: string, homeId?: string) => {
       try {
         if (!name.trim()) {
           showSnackbar("Please enter a list name", "warning");
@@ -112,16 +165,53 @@ const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
           description: "",
           color: color, // Store color locally (API doesn't support it)
           archived: false,
+          status: "active",
+          home_id: homeId || null, // Add home assignment
           items: [],
           createdAt: createdAt,
           updatedAt: createdAt,
         };
+
+        // Add home info immediately if homeId is provided
+        if (homeId) {
+          // Get home data from HomeCacheManager
+          try {
+            const homes = await HomeCacheManager.getHomes();
+            const selectedHome = homes.find((h) => h._id === homeId);
+            if (selectedHome) {
+              (newList as any).home = {
+                id: selectedHome._id,
+                name: selectedHome.name,
+              };
+            }
+          } catch (error) {
+            console.error(
+              "[ShoppingListScreen] Error getting home info:",
+              error
+            );
+          }
+
+          // Add creator info (current user)
+          (newList as any).creator = {
+            id: user.id,
+            name: user.name,
+            photo: user.photo,
+          };
+        }
 
         // Add to cache first (for immediate UI update)
         await ShoppingCacheManager.addShoppingListToCache(newList);
 
         // Update local state
         setLists((prev) => [...prev, newList]);
+
+        // Force immediate sync to backend
+        console.log(
+          "[ShoppingListScreen] Forcing immediate sync after list creation"
+        );
+        ShoppingCacheManager.uploadPendingChanges().catch((error) => {
+          console.error("[ShoppingListScreen] Error in immediate sync:", error);
+        });
 
         showSnackbar("Shopping list created successfully", "success");
       } catch (error) {
@@ -135,19 +225,24 @@ const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
   const handleDeleteList = useCallback(
     async (listId: string) => {
       try {
-        // Remove from cache only (server sync happens on events)
-        await ShoppingCacheManager.removeShoppingListFromCache(listId);
+        // Mark as deleted in cache only (server sync happens on events)
+        const listToDelete = lists.find((list) => list._id === listId);
+        if (listToDelete) {
+          const deletedList = {
+            ...listToDelete,
+            status: "deleted" as const,
+            updatedAt: Date.now(),
+          };
+          await ShoppingCacheManager.updateShoppingListInCache(deletedList);
 
-        // Update local state
-        setLists((prev) => prev.filter((list) => list._id !== listId));
-
-        showSnackbar("Shopping list deleted successfully", "success");
+          // Remove deleted list from UI immediately (hide it)
+          setLists((prev) => prev.filter((list) => list._id !== listId));
+        }
       } catch (error) {
         console.error("[ShoppingListScreen] Error in handleDeleteList:", error);
-        showSnackbar("Failed to delete shopping list", "error");
       }
     },
-    [showSnackbar]
+    [lists]
   );
 
   const handleArchiveList = useCallback(
@@ -159,26 +254,48 @@ const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
           const archivedList = {
             ...listToArchive,
             archived: true,
+            status: "archived" as const,
             updatedAt: Date.now(),
           };
           await ShoppingCacheManager.updateShoppingListInCache(archivedList);
 
-          // Update local state
-          setLists((prev) =>
-            prev.map((list) => (list._id === listId ? archivedList : list))
-          );
+          // Remove archived list from UI immediately (hide it)
+          setLists((prev) => prev.filter((list) => list._id !== listId));
         }
-
-        showSnackbar("Shopping list archived successfully", "success");
       } catch (error) {
         console.error(
           "[ShoppingListScreen] Error in handleArchiveList:",
           error
         );
-        showSnackbar("Failed to archive shopping list", "error");
       }
     },
-    [showSnackbar, lists]
+    [lists]
+  );
+
+  const handleCompleteList = useCallback(
+    async (listId: string) => {
+      try {
+        // Mark list as completed
+        const listToComplete = lists.find((list) => list._id === listId);
+        if (listToComplete) {
+          const completedList = {
+            ...listToComplete,
+            status: "completed" as const,
+            updatedAt: Date.now(),
+          };
+          await ShoppingCacheManager.updateShoppingListInCache(completedList);
+
+          // Remove completed list from UI immediately (hide it)
+          setLists((prev) => prev.filter((list) => list._id !== listId));
+        }
+      } catch (error) {
+        console.error(
+          "[ShoppingListScreen] Error in handleCompleteList:",
+          error
+        );
+      }
+    },
+    [lists]
   );
 
   const handleListUpdate = useCallback(async (updatedList: ShoppingList) => {
@@ -235,13 +352,15 @@ const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
       }}
     >
       <Box>
-        {lists.map((list) => (
+        {filteredLists.map((list) => (
           <ShoppingListCard
             key={list._id}
             list={list}
             onUpdate={handleListUpdate}
             onDelete={handleDeleteList}
             onArchive={handleArchiveList}
+            onComplete={handleCompleteList}
+            currentUserId={user?.id}
           />
         ))}
       </Box>
@@ -261,7 +380,6 @@ const ShoppingListScreen: React.FC<ShoppingListScreenProps> = ({ user }) => {
           }}
         />
       )}
-
     </Container>
   );
 };
