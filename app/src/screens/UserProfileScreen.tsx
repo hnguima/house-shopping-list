@@ -12,11 +12,21 @@ import {
   InputLabel,
   FormControlLabel,
   styled,
+  Button,
+  Divider,
 } from "@mui/material";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
 import ProfilePhoto from "../components/ProfilePhoto";
+import HomeCard from "../components/HomeCard";
+import HomeInvitationCard from "../components/HomeInvitationCard";
+import CreateHomeDialog from "../components/dialogs/CreateHomeDialog";
+import InviteUserDialog from "../components/dialogs/InviteUserDialog";
+import JoinHomeDialog from "../components/dialogs/JoinHomeDialog";
+import EditHomeDialog from "../components/dialogs/EditHomeDialog";
+import { useHomes } from "../hooks/useHomes";
 import type { User } from "../types/user";
+import type { Home, HomeInvitation } from "../types/home";
 
 interface UserProfileScreenProps {
   themeMode: "light" | "dark";
@@ -46,6 +56,85 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
   // Local UI state
   const [editName, setEditName] = useState(user.name || "");
   const [photoLoading, setPhotoLoading] = useState(false);
+
+  // Homes management state
+  const {
+    homes,
+    invitations,
+    loading: homesLoading,
+    createHome,
+    updateHome,
+    deleteHome,
+    inviteToHome,
+    requestJoinHome,
+    respondToInvitation,
+    leaveHome,
+  } = useHomes();
+  const [createHomeOpen, setCreateHomeOpen] = useState(false);
+  const [inviteUserOpen, setInviteUserOpen] = useState(false);
+  const [joinHomeOpen, setJoinHomeOpen] = useState(false);
+  const [editHomeOpen, setEditHomeOpen] = useState(false);
+  const [selectedHomeForInvite, setSelectedHomeForInvite] =
+    useState<Home | null>(null);
+  const [selectedHomeForEdit, setSelectedHomeForEdit] = useState<Home | null>(
+    null
+  );
+
+  // Handle home management actions
+  const handleCreateHome = async (name: string, description?: string) => {
+    return (await createHome(name, description)) !== null;
+  };
+
+  const handleInviteUser = async (email: string, message?: string) => {
+    if (selectedHomeForInvite) {
+      return await inviteToHome(selectedHomeForInvite._id, email, message);
+    }
+    return false;
+  };
+
+  const handleAcceptInvitation = (invitation: HomeInvitation) => {
+    respondToInvitation(invitation._id, true);
+  };
+
+  const handleDeclineInvitation = (invitation: HomeInvitation) => {
+    respondToInvitation(invitation._id, false);
+  };
+
+  const handleLeaveHome = (home: Home) => {
+    leaveHome(home._id);
+  };
+
+  const handleInviteToHome = (home: Home) => {
+    setSelectedHomeForInvite(home);
+    setInviteUserOpen(true);
+  };
+
+  const handleJoinHome = async (homeId: string, message?: string) => {
+    return await requestJoinHome(homeId, message);
+  };
+
+  const handleEditHome = (home: Home) => {
+    setSelectedHomeForEdit(home);
+    setEditHomeOpen(true);
+  };
+
+  const handleUpdateHome = async (name: string, description?: string) => {
+    if (selectedHomeForEdit) {
+      return await updateHome(selectedHomeForEdit._id, name, description);
+    }
+    return false;
+  };
+
+  const handleDeleteHome = async (home: Home) => {
+    // Add confirmation dialog logic here if needed
+    if (
+      window.confirm(
+        `Are you sure you want to delete "${home.name}"? This action cannot be undone.`
+      )
+    ) {
+      await deleteHome(home._id);
+    }
+  };
 
   // No longer need subscription-based updates with the new simple cache system
   // The new system is more direct and doesn't require complex event handling
@@ -168,7 +257,6 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
       };
 
       onUserUpdate(updatedUser);
-
     } catch (error) {
       console.error("Error updating name:", error);
     }
@@ -293,6 +381,137 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({
           label={`${t("theme")}: ${t(themeMode)}`}
         />
       </Pane>
+
+      {/* Homes Management Section */}
+      <Pane>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mb: 2,
+          }}
+        >
+          <Typography variant="h6">{t("homes", "My Homes")}</Typography>
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setJoinHomeOpen(true)}
+            >
+              {t("joinHome", "Join Home")}
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setCreateHomeOpen(true)}
+            >
+              {t("createHome", "Create Home")}
+            </Button>
+          </Box>
+        </Box>
+
+        {homesLoading ? (
+          <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              {t("loading", "Loading...")}
+            </Typography>
+          </Box>
+        ) : (
+          <>
+            {/* User's Homes */}
+            {homes.length > 0 ? (
+              <Box sx={{ mb: 3 }}>
+                <Typography
+                  variant="subtitle2"
+                  color="text.secondary"
+                  sx={{ mb: 1 }}
+                >
+                  {t("myHomes", "My Homes")}
+                </Typography>
+                {homes.map((home) => (
+                  <HomeCard
+                    key={home._id}
+                    home={home}
+                    currentUserId={user.id}
+                    onEdit={() => handleEditHome(home)}
+                    onInvite={() => handleInviteToHome(home)}
+                    onLeave={() => handleLeaveHome(home)}
+                    onDelete={() => handleDeleteHome(home)}
+                  />
+                ))}
+              </Box>
+            ) : (
+              <Box sx={{ textAlign: "center", py: 3 }}>
+                <Typography variant="body2" color="text.secondary">
+                  {t("noHomes", "You haven't joined any homes yet.")}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {t(
+                    "createOrJoinHome",
+                    "Create a new home or wait for an invitation."
+                  )}
+                </Typography>
+              </Box>
+            )}
+
+            {/* Pending Invitations */}
+            {invitations.length > 0 && (
+              <>
+                <Divider sx={{ my: 2 }} />
+                <Typography
+                  variant="subtitle2"
+                  color="text.secondary"
+                  sx={{ mb: 1 }}
+                >
+                  {t("pendingInvitations", "Pending Invitations")}
+                </Typography>
+                {invitations.map((invitation) => (
+                  <HomeInvitationCard
+                    key={invitation._id}
+                    invitation={invitation}
+                    onAccept={() => handleAcceptInvitation(invitation)}
+                    onReject={() => handleDeclineInvitation(invitation)}
+                  />
+                ))}
+              </>
+            )}
+          </>
+        )}
+      </Pane>
+
+      {/* Dialogs */}
+      <CreateHomeDialog
+        open={createHomeOpen}
+        onClose={() => setCreateHomeOpen(false)}
+        onCreate={handleCreateHome}
+      />
+
+      <InviteUserDialog
+        open={inviteUserOpen}
+        onClose={() => {
+          setInviteUserOpen(false);
+          setSelectedHomeForInvite(null);
+        }}
+        onInvite={handleInviteUser}
+        home={selectedHomeForInvite || undefined}
+      />
+
+      <JoinHomeDialog
+        open={joinHomeOpen}
+        onClose={() => setJoinHomeOpen(false)}
+        onJoin={handleJoinHome}
+      />
+
+      <EditHomeDialog
+        open={editHomeOpen}
+        onClose={() => {
+          setEditHomeOpen(false);
+          setSelectedHomeForEdit(null);
+        }}
+        onEdit={handleUpdateHome}
+        home={selectedHomeForEdit || undefined}
+      />
     </Box>
   );
 };
